@@ -18,6 +18,7 @@ import javax.ws.rs.client.Client;
 
 import org.apache.http.client.utils.URIBuilder;
 import org.joda.time.format.ISODateTimeFormat;
+import org.unbescape.html.HtmlEscape;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -80,6 +81,7 @@ public class ImportUtils {
 			String redmineProjectId = getRedmineProjectId(redmineProject);
 			Set<String> nonExistentMilestones = new HashSet<>();
 			Set<String> nonExistentLogins = new HashSet<>();
+			Set<String> unmappedIssueTypes = new HashSet<>();
 			Map<String, Milestone> milestoneMappings = new HashMap<>();
 			Map<String, String> versionsMappings = new HashMap<>();
 			Map<String, String> statusesMappings = new HashMap<>();
@@ -112,6 +114,7 @@ public class ImportUtils {
 
 				@Override
 				public void consume(List<JsonNode> pageData) throws InterruptedException {
+					logger.log("Importing issues from project " + redmineProject + "...");
 					for (JsonNode issueNode: pageData) {
 						if (Thread.interrupted())
 							throw new InterruptedException();
@@ -124,6 +127,7 @@ public class ImportUtils {
 						issue.setDescription(issueNode.get("description").asText(null));
 						issue.setNumberScope(oneDevProject.getForkRoot());
 
+						// issue id --> number
 						Long oldNumber = issueNode.get("id").asLong();
 						Long newNumber;
 						if (dryRun || useExistingIssueNumbers)
@@ -133,13 +137,16 @@ public class ImportUtils {
 						issue.setNumber(newNumber);
 						issueNumberMappings.put(oldNumber, newNumber);
 
-						if (closedStatuses.contains(issueNode.get("status").get("name").asText())) {
-							issue.setState("Rejected".equals(issueNode.get("status").get("name").asText())
+						// status --> state
+						String status = issueNode.get("status").get("name").asText();
+						if (closedStatuses.contains(status)) {
+							issue.setState("Rejected".equals(status)
 									? importOption.getRejectedIssueState()
 									: importOption.getClosedIssueState());
 						} else
 							issue.setState(initialIssueState);
 
+						// fixed_version ("Target version") --> milestone
 						if (issueNode.hasNonNull("fixed_version")) {
 							String milestoneName = issueNode.get("fixed_version").get("name").asText();
 							Milestone milestone = milestoneMappings.get(milestoneName);
@@ -154,6 +161,7 @@ public class ImportUtils {
 							}
 						}
 
+						// author --> submitter
 						String login = issueNode.get("author").get("id").asText(null);
 						User user = getUser(client, server, users, login, logger);
 						if (user != null) {
@@ -163,6 +171,7 @@ public class ImportUtils {
 							nonExistentLogins.add(issueNode.get("author").get("name").asText());
 						}
 
+						// created_on --> submit date
 						issue.setSubmitDate(ISODateTimeFormat.dateTimeNoMillis()
 								.parseDateTime(issueNode.get("created_on").asText())
 								.toDate());
@@ -173,6 +182,39 @@ public class ImportUtils {
 						lastUpdate.setUser(issue.getSubmitter());
 						issue.setLastUpdate(lastUpdate);
 
+						// tracker --> custom field "Type"
+						JsonNode trackerNode = issueNode.get("tracker");
+						if (trackerNode != null) {
+							String trackerName = trackerNode.get("name").asText();
+							String typeValue = null;
+							switch (trackerName) {
+								case "Bug":     typeValue = "Bug"; break;
+								case "Feature": typeValue = "New Feature"; break;
+								case "Task":    typeValue = "Task"; break;
+							}
+							if (typeValue != null)
+								issue.setFieldValue("Type", typeValue);
+							else
+								unmappedIssueTypes.add(HtmlEscape.escapeHtml5(trackerName));
+						}
+
+						// priority --> custom field "Priority"
+						JsonNode priorityNode = issueNode.get("priority");
+						if (priorityNode != null) {
+							String priorityName = priorityNode.get("name").asText();
+							String priorityValue;
+							switch (priorityName) {
+								case "Low":       priorityValue = "Minor"; break;
+								default:
+								case "Normal":    priorityValue = "Normal"; break;
+								case "High":      priorityValue = "Major"; break;
+								case "Urgent":
+								case "Immediate": priorityValue = "Critical"; break;
+							}
+							issue.setFieldValue("Priority", priorityValue);
+						}
+
+						// assigned_to --> custom field "Assignees"
 						JsonNode assigneeNode = issueNode.get("assigned_to");
 						if (assigneeNode != null) {
 							IssueField assigneeField = new IssueField();
@@ -274,6 +316,7 @@ public class ImportUtils {
 			ImportResult result = new ImportResult();
 			result.nonExistentLogins.addAll(nonExistentLogins);
 			result.nonExistentMilestones.addAll(nonExistentMilestones);
+			result.unmappedIssueTypes.addAll(unmappedIssueTypes);
 
 			if (numOfImportedIssues.get() != 0)
 				result.issuesImported = true;

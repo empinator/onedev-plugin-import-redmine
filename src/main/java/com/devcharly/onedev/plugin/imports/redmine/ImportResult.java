@@ -14,6 +14,8 @@ public class ImportResult {
 
 	Set<String> nonExistentLogins = new HashSet<>();
 
+	Set<String> unmappedIssueTypes = new HashSet<>();
+
 	Set<String> nonExistentMilestones = new HashSet<>();
 
 	boolean issuesImported = false;
@@ -32,7 +34,7 @@ public class ImportResult {
 
 		boolean hasNotice = false;
 
-		if (!nonExistentMilestones.isEmpty()
+		if (!nonExistentMilestones.isEmpty() || !unmappedIssueTypes.isEmpty()
 				|| !nonExistentLogins.isEmpty() || issuesImported) {
 			hasNotice = true;
 		}
@@ -42,6 +44,10 @@ public class ImportResult {
 
 		if (!nonExistentMilestones.isEmpty())
 			feedback.append(getEntryFeedback("Non existent milestones", nonExistentMilestones));
+		if (!unmappedIssueTypes.isEmpty()) {
+			feedback.append(getEntryFeedback("Redmine issue tracker not mapped to OneDev issue type",
+					unmappedIssueTypes));
+		}
 		if (!nonExistentLogins.isEmpty()) {
 			feedback.append(getEntryFeedback("Redmine logins without public email or public email can not be mapped to OneDev account",
 					nonExistentLogins));

@@ -26,10 +26,10 @@ public class IssueImportOption implements Serializable {
 
 	private boolean importVersions;
 
-	private String closedIssueState = "Released";
-	private String rejectedIssueState = "Closed";
+	private String closedIssueState = "Closed";
+	private String rejectedIssueState = "Rejected";
 
-	private String assigneesIssueField;
+	private String assigneesIssueField = "Assignees";
 	private String categoryIssueField = "Category";
 
 	@Editable(order=100, name="Import Issues")
@@ -88,7 +88,7 @@ public class IssueImportOption implements Serializable {
 		return choices;
 	}
 
-	@Editable(order=350, description="Specify a multi-value user field to hold assignees information."
+	@Editable(order=350, description="Specify a multi-value user field to hold assignees information.<br>"
 			+ "<b>NOTE: </b> You may customize OneDev issue fields in case there is no appropriate option here")
 	@ChoiceProvider("getAssigneesIssueFieldChoices")
 	@NotEmpty
