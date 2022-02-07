@@ -30,6 +30,7 @@ public class IssueImportOption implements Serializable {
 	private String rejectedIssueState = "Closed";
 
 	private String assigneesIssueField;
+	private String categoryIssueField = "Category";
 
 	@Editable(order=100, name="Import Issues")
 	@Nullable
@@ -107,6 +108,17 @@ public class IssueImportOption implements Serializable {
 				choices.add(field.getName());
 		}
 		return choices;
+	}
+
+	@Editable(order=360, description="Specify a custom field to hold category information.<br>"
+			+ "<b>NOTE: </b> The custom field is created if it does not exist")
+	@NotEmpty
+	public String getCategoryIssueField() {
+		return categoryIssueField;
+	}
+
+	public void setCategoryIssueField(String categoryIssueField) {
+		this.categoryIssueField = categoryIssueField;
 	}
 
 }

@@ -38,6 +38,11 @@ import io.onedev.server.model.Project;
 import io.onedev.server.model.User;
 import io.onedev.server.model.support.LastUpdate;
 import io.onedev.server.model.support.administration.GlobalIssueSetting;
+import io.onedev.server.model.support.inputspec.InputSpec;
+import io.onedev.server.model.support.inputspec.choiceinput.choiceprovider.Choice;
+import io.onedev.server.model.support.inputspec.choiceinput.choiceprovider.SpecifiedChoices;
+import io.onedev.server.model.support.issue.field.spec.ChoiceField;
+import io.onedev.server.model.support.issue.field.spec.FieldSpec;
 import io.onedev.server.persistence.dao.Dao;
 import io.onedev.server.util.JerseyUtils;
 import io.onedev.server.util.JerseyUtils.PageDataConsumer;
@@ -93,6 +98,8 @@ public class ImportUtils {
 				if (statusNode.has("is_closed") && statusNode.get("is_closed").asBoolean())
 					closedStatuses.add(statusNode.get("name").asText());
 			}
+
+			importIssueCategories(server, redmineProject, importOption, dryRun, logger);
 
 			String initialIssueState = getIssueSetting().getInitialStateSpec().getName();
 
@@ -181,6 +188,13 @@ public class ImportUtils {
 							} else {
 								nonExistentLogins.add(login);
 							}
+						}
+
+						// category --> custom field "Category"
+						JsonNode categoryNode = issueNode.get("category");
+						if (categoryNode != null) {
+							String category = categoryNode.get("name").asText();
+							issue.setFieldValue(importOption.getCategoryIssueField(), category);
 						}
 
 						String apiEndpoint = server.getApiEndpoint("/issues/" + oldNumber + ".json?include=journals");
@@ -310,6 +324,50 @@ public class ImportUtils {
 
 				if (!dryRun)
 					OneDev.getInstance(MilestoneManager.class).save(milestone);
+			}
+		} finally {
+			client.close();
+		}
+	}
+
+	private static void importIssueCategories(ImportServer server, String redmineProject,
+			IssueImportOption importOption, boolean dryRun, TaskLogger logger) {
+		Client client = server.newClient();
+		try {
+			String redmineProjectId = getRedmineProjectId(redmineProject);
+			String categoryIssueField = importOption.getCategoryIssueField();
+
+			GlobalIssueSetting issueSetting = getIssueSetting();
+			for (FieldSpec field : issueSetting.getFieldSpecs()) {
+				if (field.getName().equals(categoryIssueField)) {
+					logger.log("Issue Category '" + categoryIssueField + "' already exists");
+					return;
+				}
+			}
+
+			List<Choice> choices = new ArrayList<>();
+			logger.log("Importing issue categories from project " + redmineProject + "...");
+			String apiEndpoint = server.getApiEndpoint("/projects/" + redmineProjectId + "/issue_categories.json");
+			for (JsonNode categoryNode: list(client, apiEndpoint, "issue_categories", logger)) {
+				String name = categoryNode.get("name").asText();
+
+				Choice choice = new Choice();
+				choice.setValue(name);
+				choices.add(choice);
+			}
+
+			SpecifiedChoices specifiedChoices = new SpecifiedChoices();
+			specifiedChoices.setChoices(choices);
+
+			ChoiceField field = new ChoiceField();
+			field.setName(categoryIssueField);
+			field.setNameOfEmptyValue("Undefined");
+			field.setAllowEmpty(true);
+			field.setChoiceProvider(specifiedChoices);
+
+			if (!dryRun) {
+				issueSetting.getFieldSpecs().add(field);
+				OneDev.getInstance(SettingManager.class).saveIssueSetting(issueSetting);
 			}
 		} finally {
 			client.close();
