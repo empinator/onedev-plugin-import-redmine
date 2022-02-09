@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import javax.annotation.Nullable;
 import javax.ws.rs.client.Client;
 
+import org.apache.commons.lang.StringUtils;
 import org.apache.http.client.utils.URIBuilder;
 import org.joda.time.format.ISODateTimeFormat;
 import org.unbescape.html.HtmlEscape;
@@ -58,13 +59,57 @@ import io.onedev.server.persistence.dao.Dao;
 import io.onedev.server.util.Input;
 import io.onedev.server.util.JerseyUtils;
 import io.onedev.server.util.JerseyUtils.PageDataConsumer;
+import io.onedev.server.util.Pair;
 
 public class ImportUtils {
 
 	static final String NAME = "Redmine";
 
+	private static final Map<String, String> trackerDefaultFields = new HashMap<>();
+	private static final Map<String, String> priorityDefaultFields = new HashMap<>();
+
+	static {
+		trackerDefaultFields.put("Bug", "Type::Bug");
+		trackerDefaultFields.put("Feature", "Type::New Feature");
+		trackerDefaultFields.put("Task", "Type::Task");
+
+		priorityDefaultFields.put("Low", "Priority::Minor");
+		priorityDefaultFields.put("Normal", "Priority::Normal");
+		priorityDefaultFields.put("High", "Priority::Major");
+		priorityDefaultFields.put("Urgent", "Priority::Critical");
+		priorityDefaultFields.put("Immediate", "Priority::Critical");
+	}
+
 	static IssueImportOption buildImportOption(ImportServer server, Collection<String> redmineProjects, TaskLogger logger) {
 		IssueImportOption importOption = new IssueImportOption();
+		Client client = server.newClient();
+		try {
+			Set<String> trackers = new LinkedHashSet<>();
+			String trackersApiEndpoint = server.getApiEndpoint("/trackers.json");
+			for (JsonNode trackerNode: list(client, trackersApiEndpoint, "trackers", logger))
+				trackers.add(trackerNode.get("name").asText());
+
+			Set<String> priorities = new LinkedHashSet<>();
+			String prioritiesApiEndpoint = server.getApiEndpoint("/enumerations/issue_priorities.json");
+			for (JsonNode priorityNode: list(client, prioritiesApiEndpoint, "issue_priorities", logger))
+				priorities.add(priorityNode.get("name").asText());
+
+			for (String tracker: trackers) {
+				IssueTrackerMapping mapping = new IssueTrackerMapping();
+				mapping.setRedmineIssueTracker(tracker);
+				mapping.setOneDevIssueField(trackerDefaultFields.get(tracker));
+				importOption.getIssueTrackerMappings().add(mapping);
+			}
+
+			for (String priority: priorities) {
+				IssuePriorityMapping mapping = new IssuePriorityMapping();
+				mapping.setRedmineIssuePriority(priority);
+				mapping.setOneDevIssueField(priorityDefaultFields.get(priority));
+				importOption.getIssuePriorityMappings().add(mapping);
+			}
+		} finally {
+			client.close();
+		}
 		return importOption;
 	}
 
@@ -98,7 +143,11 @@ public class ImportUtils {
 			Set<String> nonExistentMilestones = new HashSet<>();
 			Set<String> nonExistentLogins = new HashSet<>();
 			Set<String> unmappedIssueTypes = new HashSet<>();
+			Set<String> unmappedIssuePriorities = new HashSet<>();
 			Set<String> resultNotes = new LinkedHashSet<>();
+
+			Map<String, Pair<FieldSpec, String>> trackerMappings = new HashMap<>();
+			Map<String, Pair<FieldSpec, String>> priorityMappings = new HashMap<>();
 
 			Map<String, Milestone> milestoneMappings = new HashMap<>();
 			Map<String, String> versionsMappings = new HashMap<>();
@@ -106,6 +155,26 @@ public class ImportUtils {
 			Set<String> closedStatuses = new HashSet<>();
 
 			Map<String, String> categoryId2nameMap = new HashMap<>();
+
+			GlobalIssueSetting issueSetting = getIssueSetting();
+
+			for (IssueTrackerMapping mapping: importOption.getIssueTrackerMappings()) {
+				String oneDevFieldName = StringUtils.substringBefore(mapping.getOneDevIssueField(), "::");
+				String oneDevFieldValue = StringUtils.substringAfter(mapping.getOneDevIssueField(), "::");
+				FieldSpec fieldSpec = issueSetting.getFieldSpec(oneDevFieldName);
+				if (fieldSpec == null)
+					throw new ExplicitException("No field spec found: " + oneDevFieldName);
+				trackerMappings.put(mapping.getRedmineIssueTracker(), new Pair<>(fieldSpec, oneDevFieldValue));
+			}
+
+			for (IssuePriorityMapping mapping: importOption.getIssuePriorityMappings()) {
+				String oneDevFieldName = StringUtils.substringBefore(mapping.getOneDevIssueField(), "::");
+				String oneDevFieldValue = StringUtils.substringAfter(mapping.getOneDevIssueField(), "::");
+				FieldSpec fieldSpec = issueSetting.getFieldSpec(oneDevFieldName);
+				if (fieldSpec == null)
+					throw new ExplicitException("No field spec found: " + oneDevFieldName);
+				priorityMappings.put(mapping.getRedmineIssuePriority(), new Pair<>(fieldSpec, oneDevFieldValue));
+			}
 
 			for (Milestone milestone: oneDevProject.getMilestones())
 				milestoneMappings.put(milestone.getName(), milestone);
@@ -127,7 +196,7 @@ public class ImportUtils {
 
 			importIssueCategories(server, redmineProject, importOption, dryRun, logger);
 
-			String initialIssueState = getIssueSetting().getInitialStateSpec().getName();
+			String initialIssueState = issueSetting.getInitialStateSpec().getName();
 
 			List<Issue> issues = new ArrayList<>();
 
@@ -148,6 +217,10 @@ public class ImportUtils {
 						Issue issue = new Issue();
 						issue.setProject(oneDevProject);
 						issue.setNumberScope(oneDevProject.getForkRoot());
+
+						// initialize all custom fields
+						for (FieldSpec fieldSpec : issueSetting.getFieldSpecs())
+							issue.setFieldValue(fieldSpec.getName(), null);
 
 						// subject --> title
 						issue.setTitle(issueNode.get("subject").asText());
@@ -211,47 +284,42 @@ public class ImportUtils {
 						issue.setLastUpdate(lastUpdate);
 
 						// tracker --> custom field "Type"
-						String typeValue = null;
 						JsonNode trackerNode = issueNode.get("tracker");
 						if (trackerNode != null) {
 							String trackerName = trackerNode.get("name").asText();
-							switch (trackerName) {
-								case "Bug":     typeValue = "Bug"; break;
-								case "Feature": typeValue = "New Feature"; break;
-								case "Task":    typeValue = "Task"; break;
-							}
-							if (typeValue == null)
+							Pair<FieldSpec, String> mapped = trackerMappings.get(trackerName);
+							if (mapped != null) {
+								issue.setFieldValue(mapped.getFirst().getName(), mapped.getSecond());
+							} else {
+								extraIssueInfo.put("Type", HtmlEscape.escapeHtml5(trackerName));
 								unmappedIssueTypes.add(HtmlEscape.escapeHtml5(trackerName));
+							}
 						}
-						issue.setFieldValue("Type", typeValue);
 
 						// priority --> custom field "Priority"
-						String priorityValue = "Normal";
 						JsonNode priorityNode = issueNode.get("priority");
 						if (priorityNode != null) {
 							String priorityName = priorityNode.get("name").asText();
-							switch (priorityName) {
-								case "Low":       priorityValue = "Minor"; break;
-								case "Normal":    priorityValue = "Normal"; break;
-								case "High":      priorityValue = "Major"; break;
-								case "Urgent":
-								case "Immediate": priorityValue = "Critical"; break;
+							Pair<FieldSpec, String> mapped = priorityMappings.get(priorityName);
+							if (mapped != null) {
+								issue.setFieldValue(mapped.getFirst().getName(), mapped.getSecond());
+							} else {
+								extraIssueInfo.put("Priority", HtmlEscape.escapeHtml5(priorityName));
+								unmappedIssuePriorities.add(priorityName);
 							}
 						}
-						issue.setFieldValue("Priority", priorityValue);
 
 						// assigned_to --> custom field "Assignees"
-						String assigneeValue = null;
 						JsonNode assigneeNode = issueNode.get("assigned_to");
 						if (assigneeNode != null) {
 							login = assigneeNode.get("id").asText();
 							user = getUser(client, server, users, login, logger);
-							if (user != null)
-								assigneeValue = user.getName();
-							else
+							if (user != null) {
+								issue.setFieldValue(importOption.getAssigneesIssueField(), user.getName());
+							} else {
 								nonExistentLogins.add(assigneeNode.get("name").asText() + ":" + login);
+							}
 						}
-						issue.setFieldValue(importOption.getAssigneesIssueField(), assigneeValue);
 
 						// category --> custom field "Category"
 						JsonNode categoryNode = issueNode.get("category");
@@ -373,8 +441,10 @@ public class ImportUtils {
 							else
 								issue.setDescription(builder.toString());
 						}
+
 						issues.add(issue);
 					}
+
 					logger.log("Imported " + numOfImportedIssues.addAndGet(pageData.size()) + " issues");
 				}
 
@@ -408,6 +478,7 @@ public class ImportUtils {
 			result.nonExistentLogins.addAll(nonExistentLogins);
 			result.nonExistentMilestones.addAll(nonExistentMilestones);
 			result.unmappedIssueTypes.addAll(unmappedIssueTypes);
+			result.unmappedIssuePriorities.addAll(unmappedIssuePriorities);
 			result.notes.addAll(resultNotes);
 
 			if (numOfImportedIssues.get() != 0)

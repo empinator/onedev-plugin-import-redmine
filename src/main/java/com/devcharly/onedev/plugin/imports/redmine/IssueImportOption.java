@@ -32,6 +32,9 @@ public class IssueImportOption implements Serializable {
 	private String assigneesIssueField = "Assignees";
 	private String categoryIssueField = "Category";
 
+	private List<IssueTrackerMapping> issueTrackerMappings = new ArrayList<>();
+	private List<IssuePriorityMapping> issuePriorityMappings = new ArrayList<>();
+
 	@Editable(order=100, name="Import Issues")
 	@Nullable
 	public boolean isImportIssues() {
@@ -119,6 +122,26 @@ public class IssueImportOption implements Serializable {
 
 	public void setCategoryIssueField(String categoryIssueField) {
 		this.categoryIssueField = categoryIssueField;
+	}
+
+	@Editable(order=700, description="Specify how to map Redmine issue trackers to OneDev custom fields.<br>"
+			+ "<b>NOTE: </b> You may customize OneDev issue fields in case there is no appropriate option here")
+	public List<IssueTrackerMapping> getIssueTrackerMappings() {
+		return issueTrackerMappings;
+	}
+
+	public void setIssueTrackerMappings(List<IssueTrackerMapping> issueTrackerMappings) {
+		this.issueTrackerMappings = issueTrackerMappings;
+	}
+
+	@Editable(order=800, description="Specify how to map Redmine issue priorities to OneDev custom fields.<br>"
+			+ "<b>NOTE: </b> You may customize OneDev issue fields in case there is no appropriate option here")
+	public List<IssuePriorityMapping> getIssuePriorityMappings() {
+		return issuePriorityMappings;
+	}
+
+	public void setIssuePriorityMappings(List<IssuePriorityMapping> issuePriorityMappings) {
+		this.issuePriorityMappings = issuePriorityMappings;
 	}
 
 }
