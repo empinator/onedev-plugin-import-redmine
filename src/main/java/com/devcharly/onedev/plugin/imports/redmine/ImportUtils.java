@@ -147,9 +147,13 @@ public class ImportUtils {
 
 						Issue issue = new Issue();
 						issue.setProject(oneDevProject);
-						issue.setTitle(issueNode.get("subject").asText());
-						issue.setDescription(issueNode.get("description").asText(null));
 						issue.setNumberScope(oneDevProject.getForkRoot());
+
+						// subject --> title
+						issue.setTitle(issueNode.get("subject").asText());
+
+						// description --> description
+						issue.setDescription(issueNode.get("description").asText(null));
 
 						// issue id --> number
 						Long oldNumber = issueNode.get("id").asLong();
@@ -207,61 +211,52 @@ public class ImportUtils {
 						issue.setLastUpdate(lastUpdate);
 
 						// tracker --> custom field "Type"
+						String typeValue = null;
 						JsonNode trackerNode = issueNode.get("tracker");
 						if (trackerNode != null) {
 							String trackerName = trackerNode.get("name").asText();
-							String typeValue = null;
 							switch (trackerName) {
 								case "Bug":     typeValue = "Bug"; break;
 								case "Feature": typeValue = "New Feature"; break;
 								case "Task":    typeValue = "Task"; break;
 							}
-							if (typeValue != null)
-								issue.setFieldValue("Type", typeValue);
-							else
+							if (typeValue == null)
 								unmappedIssueTypes.add(HtmlEscape.escapeHtml5(trackerName));
 						}
+						issue.setFieldValue("Type", typeValue);
 
 						// priority --> custom field "Priority"
+						String priorityValue = "Normal";
 						JsonNode priorityNode = issueNode.get("priority");
 						if (priorityNode != null) {
 							String priorityName = priorityNode.get("name").asText();
-							String priorityValue;
 							switch (priorityName) {
 								case "Low":       priorityValue = "Minor"; break;
-								default:
 								case "Normal":    priorityValue = "Normal"; break;
 								case "High":      priorityValue = "Major"; break;
 								case "Urgent":
 								case "Immediate": priorityValue = "Critical"; break;
 							}
-							issue.setFieldValue("Priority", priorityValue);
 						}
+						issue.setFieldValue("Priority", priorityValue);
 
 						// assigned_to --> custom field "Assignees"
+						String assigneeValue = null;
 						JsonNode assigneeNode = issueNode.get("assigned_to");
 						if (assigneeNode != null) {
-							IssueField assigneeField = new IssueField();
-							assigneeField.setIssue(issue);
-							assigneeField.setName(importOption.getAssigneesIssueField());
-							assigneeField.setType(InputSpec.USER);
-
 							login = assigneeNode.get("id").asText();
 							user = getUser(client, server, users, login, logger);
-							if (user != null) {
-								assigneeField.setValue(user.getName());
-								issue.getFields().add(assigneeField);
-							} else {
+							if (user != null)
+								assigneeValue = user.getName();
+							else
 								nonExistentLogins.add(assigneeNode.get("name").asText() + ":" + login);
-							}
 						}
+						issue.setFieldValue(importOption.getAssigneesIssueField(), assigneeValue);
 
 						// category --> custom field "Category"
 						JsonNode categoryNode = issueNode.get("category");
-						if (categoryNode != null) {
-							String category = categoryNode.get("name").asText();
-							issue.setFieldValue(importOption.getCategoryIssueField(), category);
-						}
+						String categoryValue = (categoryNode != null) ? categoryNode.get("name").asText() : null;
+						issue.setFieldValue(importOption.getCategoryIssueField(), categoryValue);
 
 						// journals ("History") --> comments, changes
 						String apiEndpoint = server.getApiEndpoint("/issues/" + oldNumber + ".json?include=journals");
