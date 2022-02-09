@@ -126,7 +126,7 @@
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-		<onedev.version>6.2.4</onedev.version>
+		<onedev.version>6.3.1</onedev.version>
 		<moduleClass>com.devcharly.onedev.plugin.imports.redmine.RedminePluginModule</moduleClass>
 	</properties>
 </project>
