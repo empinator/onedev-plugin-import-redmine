@@ -4,9 +4,12 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,6 +34,7 @@ import io.onedev.server.entitymanager.SettingManager;
 import io.onedev.server.entitymanager.UserManager;
 import io.onedev.server.entityreference.ReferenceMigrator;
 import io.onedev.server.model.Issue;
+import io.onedev.server.model.IssueChange;
 import io.onedev.server.model.IssueComment;
 import io.onedev.server.model.IssueField;
 import io.onedev.server.model.IssueSchedule;
@@ -42,9 +46,16 @@ import io.onedev.server.model.support.administration.GlobalIssueSetting;
 import io.onedev.server.model.support.inputspec.InputSpec;
 import io.onedev.server.model.support.inputspec.choiceinput.choiceprovider.Choice;
 import io.onedev.server.model.support.inputspec.choiceinput.choiceprovider.SpecifiedChoices;
+import io.onedev.server.model.support.issue.changedata.IssueChangeData;
+import io.onedev.server.model.support.issue.changedata.IssueFieldChangeData;
+import io.onedev.server.model.support.issue.changedata.IssueMilestoneAddData;
+import io.onedev.server.model.support.issue.changedata.IssueMilestoneChangeData;
+import io.onedev.server.model.support.issue.changedata.IssueMilestoneRemoveData;
+import io.onedev.server.model.support.issue.changedata.IssueTitleChangeData;
 import io.onedev.server.model.support.issue.field.spec.ChoiceField;
 import io.onedev.server.model.support.issue.field.spec.FieldSpec;
 import io.onedev.server.persistence.dao.Dao;
+import io.onedev.server.util.Input;
 import io.onedev.server.util.JerseyUtils;
 import io.onedev.server.util.JerseyUtils.PageDataConsumer;
 
@@ -63,11 +74,16 @@ public class ImportUtils {
 		Optional<User> userOpt = users.get(login);
 		if (userOpt == null) {
 			String apiEndpoint = importSource.getApiEndpoint("/users/" + login + ".json");
-			String email = JerseyUtils.get(client, apiEndpoint, logger).get("user").get("mail").asText(null);
-			if (email != null)
-				userOpt = Optional.ofNullable(OneDev.getInstance(UserManager.class).findByEmail(email));
-			else
+			try {
+				String email = JerseyUtils.get(client, apiEndpoint, logger).get("user").get("mail").asText(null);
+				if (email != null)
+					userOpt = Optional.ofNullable(OneDev.getInstance(UserManager.class).findByEmail(email));
+				else
+					userOpt = Optional.empty();
+			} catch (ExplicitException ex) {
+				// Redmine returns status 404 for unknown users
 				userOpt = Optional.empty();
+			}
 			users.put(login, userOpt);
 		}
 		return userOpt.orElse(null);
@@ -82,10 +98,14 @@ public class ImportUtils {
 			Set<String> nonExistentMilestones = new HashSet<>();
 			Set<String> nonExistentLogins = new HashSet<>();
 			Set<String> unmappedIssueTypes = new HashSet<>();
+			Set<String> resultNotes = new LinkedHashSet<>();
+
 			Map<String, Milestone> milestoneMappings = new HashMap<>();
 			Map<String, String> versionsMappings = new HashMap<>();
 			Map<String, String> statusesMappings = new HashMap<>();
 			Set<String> closedStatuses = new HashSet<>();
+
+			Map<String, String> categoryId2nameMap = new HashMap<>();
 
 			for (Milestone milestone: oneDevProject.getMilestones())
 				milestoneMappings.put(milestone.getName(), milestone);
@@ -100,6 +120,10 @@ public class ImportUtils {
 				if (statusNode.has("is_closed") && statusNode.get("is_closed").asBoolean())
 					closedStatuses.add(statusNode.get("name").asText());
 			}
+
+			String categoriesEndpoint = server.getApiEndpoint("/projects/" + redmineProjectId + "/issue_categories.json");
+			for (JsonNode categoryNode: list(client, categoriesEndpoint, "issue_categories", logger))
+				categoryId2nameMap.put(categoryNode.get("id").asText(), categoryNode.get("name").asText());
 
 			importIssueCategories(server, redmineProject, importOption, dryRun, logger);
 
@@ -168,7 +192,7 @@ public class ImportUtils {
 							issue.setSubmitter(user);
 						} else {
 							issue.setSubmitter(OneDev.getInstance(UserManager.class).getUnknown());
-							nonExistentLogins.add(issueNode.get("author").get("name").asText());
+							nonExistentLogins.add(issueNode.get("author").get("name").asText() + ":" + login);
 						}
 
 						// created_on --> submit date
@@ -228,7 +252,7 @@ public class ImportUtils {
 								assigneeField.setValue(user.getName());
 								issue.getFields().add(assigneeField);
 							} else {
-								nonExistentLogins.add(login);
+								nonExistentLogins.add(assigneeNode.get("name").asText() + ":" + login);
 							}
 						}
 
@@ -239,35 +263,105 @@ public class ImportUtils {
 							issue.setFieldValue(importOption.getCategoryIssueField(), category);
 						}
 
+						// journals ("History") --> comments, changes
 						String apiEndpoint = server.getApiEndpoint("/issues/" + oldNumber + ".json?include=journals");
 						JsonNode journalsNode = JerseyUtils.get(client, apiEndpoint, logger).get("issue").get("journals");
 						for (JsonNode journalNode: journalsNode) {
-							JsonNode notesNode = journalNode.get("notes");
-							String notes = (notesNode != null) ? notesNode.asText() : "";
-							if (notes.isEmpty())
-								continue;
-
-							IssueComment comment = new IssueComment();
-							comment.setIssue(issue);
-							comment.setContent(notes);
-							comment.setDate(ISODateTimeFormat.dateTimeNoMillis()
-									.parseDateTime(journalNode.get("created_on").asText())
-									.toDate());
-
 							login = journalNode.get("user").get("id").asText();
 							user = getUser(client, server, users, login, logger);
-							if (user != null) {
-								comment.setUser(user);
-							} else {
-								comment.setUser(OneDev.getInstance(UserManager.class).getUnknown());
-								nonExistentLogins.add(login);
+							if (user == null) {
+								user = OneDev.getInstance(UserManager.class).getUnknown();
+								nonExistentLogins.add(journalNode.get("user").get("name").asText() + ":" + login);
 							}
 
+							Date createdOn = ISODateTimeFormat.dateTimeNoMillis()
+									.parseDateTime(journalNode.get("created_on").asText())
+									.toDate();
 
-							issue.getComments().add(comment);
+							JsonNode notesNode = journalNode.get("notes");
+							String notes = (notesNode != null) ? notesNode.asText() : "";
+							if (!notes.isEmpty()) {
+								IssueComment comment = new IssueComment();
+								comment.setIssue(issue);
+								comment.setContent(notes);
+								comment.setUser(user);
+								comment.setDate(createdOn);
+
+								issue.getComments().add(comment);
+								issue.setCommentCount(issue.getComments().size());
+							}
+
+							JsonNode detailsNode = journalNode.get("details");
+							if (detailsNode != null) {
+								Map<String, Input> oldFields = new LinkedHashMap<>();
+								Map<String, Input> newFields = new LinkedHashMap<>();
+
+								for (JsonNode detailNode : detailsNode) {
+									String property = detailNode.get("property").asText();
+									String name = detailNode.get("name").asText();
+									JsonNode oldValueNode = detailNode.get("old_value");
+									JsonNode newValueNode = detailNode.get("new_value");
+									String oldValue = (oldValueNode != null) ? oldValueNode.asText(null) : null;
+									String newValue = (newValueNode != null) ? newValueNode.asText(null) : null;
+									IssueChangeData data = null;
+
+									if ("attr".equals(property)) {
+										if ("subject".equals(name)) {
+											data = new IssueTitleChangeData(oldValue, newValue);
+										} else if ("description".equals(name)) {
+											// not migrated because OneDev does not support description history
+										} else if ("category_id".equals(name)) {
+											String oldCategory = categoryId2nameMap.get(oldValue);
+											String newCategory = categoryId2nameMap.get(newValue);
+											addToFields(importOption.getCategoryIssueField(), oldCategory, oldFields);
+											addToFields(importOption.getCategoryIssueField(), newCategory, newFields);
+										} else if ("fixed_version_id".equals(name)) {
+											String oldVersion = versionsMappings.get(oldValue);
+											String newVersion = versionsMappings.get(newValue);
+											if (oldVersion != null && newVersion != null) {
+												Milestone oldMilestone = new Milestone();
+												Milestone newMilestone = new Milestone();
+												oldMilestone.setName(oldVersion);
+												newMilestone.setName(newVersion);
+												data = new IssueMilestoneChangeData(Collections.singletonList(oldMilestone), Collections.singletonList(newMilestone));
+											} else if (newVersion != null) {
+												data = new IssueMilestoneAddData(newVersion);
+											} else if (oldVersion != null) {
+												data = new IssueMilestoneRemoveData(oldVersion);
+											}
+										} else {
+											resultNotes.add(String.format(
+												"Unknown history property name '%s' in Redmine issue <a href=\"%s\">#%d</a> (<a href=\"%s\">JSON</a>)",
+												HtmlEscape.escapeHtml5(name), server.getApiEndpoint("/issues/" + oldNumber), oldNumber, apiEndpoint));
+										}
+									} else {
+										resultNotes.add(String.format(
+											"Unknown history property '%s' in Redmine issue <a href=\"%s\">#%d</a> (<a href=\"%s\">JSON</a>)",
+											HtmlEscape.escapeHtml5(property), server.getApiEndpoint("/issues/" + oldNumber), oldNumber, apiEndpoint));
+									}
+
+									if (data != null) {
+										IssueChange issueChange = new IssueChange();
+										issueChange.setIssue(issue);
+										issueChange.setDate(createdOn);
+										issueChange.setUser(user);
+										issueChange.setData(data);
+
+										issue.getChanges().add(issueChange);
+									}
+								}
+
+								if (!oldFields.isEmpty() || !newFields.isEmpty()) {
+									IssueChange issueChange = new IssueChange();
+									issueChange.setIssue(issue);
+									issueChange.setDate(createdOn);
+									issueChange.setUser(user);
+									issueChange.setData(new IssueFieldChangeData(oldFields, newFields));
+
+									issue.getChanges().add(issueChange);
+								}
+							}
 						}
-
-						issue.setCommentCount(issue.getComments().size());
 
 						if (!extraIssueInfo.isEmpty()) {
 							StringBuilder builder = new StringBuilder("|");
@@ -310,6 +404,8 @@ public class ImportUtils {
 						comment.setContent(migrator.migratePrefixed(comment.getContent(),  "#"));
 						dao.persist(comment);
 					}
+					for (IssueChange change: issue.getChanges())
+						dao.persist(change);
 				}
 			}
 
@@ -317,6 +413,7 @@ public class ImportUtils {
 			result.nonExistentLogins.addAll(nonExistentLogins);
 			result.nonExistentMilestones.addAll(nonExistentMilestones);
 			result.unmappedIssueTypes.addAll(unmappedIssueTypes);
+			result.notes.addAll(resultNotes);
 
 			if (numOfImportedIssues.get() != 0)
 				result.issuesImported = true;
@@ -325,6 +422,11 @@ public class ImportUtils {
 		} finally {
 			client.close();
 		}
+	}
+
+	private static void addToFields(String fieldName, String value, Map<String, Input> fields) {
+		if (value != null)
+			fields.put(fieldName, new Input(fieldName, InputSpec.ENUMERATION, Collections.singletonList(value)));
 	}
 
 	static void importVersions(ImportServer server, String redmineProject, Project oneDevProject,

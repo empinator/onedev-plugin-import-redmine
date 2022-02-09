@@ -18,6 +18,8 @@ public class ImportResult {
 
 	Set<String> nonExistentMilestones = new HashSet<>();
 
+	List<String> notes = new ArrayList<>();
+
 	boolean issuesImported = false;
 
 	private String getEntryFeedback(String entryDescription, Collection<String> entries) {
@@ -35,7 +37,7 @@ public class ImportResult {
 		boolean hasNotice = false;
 
 		if (!nonExistentMilestones.isEmpty() || !unmappedIssueTypes.isEmpty()
-				|| !nonExistentLogins.isEmpty() || issuesImported) {
+				|| !nonExistentLogins.isEmpty() || !notes.isEmpty() || issuesImported) {
 			hasNotice = true;
 		}
 
@@ -51,6 +53,14 @@ public class ImportResult {
 		if (!nonExistentLogins.isEmpty()) {
 			feedback.append(getEntryFeedback("Redmine logins without public email or public email can not be mapped to OneDev account",
 					nonExistentLogins));
+		}
+		if (!notes.isEmpty()) {
+			int size = Math.min(notes.size(), MAX_DISPLAY_ENTRIES);
+			for (int i = 0; i < size; i++) {
+				feedback.append("<li>").append(notes.get(i));
+			}
+			if (notes.size() > size)
+				feedback.append("<li>and ").append(notes.size() - size).append(" more");
 		}
 
 		if (hasNotice)
