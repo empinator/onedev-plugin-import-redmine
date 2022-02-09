@@ -52,6 +52,7 @@ import io.onedev.server.model.support.issue.changedata.IssueFieldChangeData;
 import io.onedev.server.model.support.issue.changedata.IssueMilestoneAddData;
 import io.onedev.server.model.support.issue.changedata.IssueMilestoneChangeData;
 import io.onedev.server.model.support.issue.changedata.IssueMilestoneRemoveData;
+import io.onedev.server.model.support.issue.changedata.IssueStateChangeData;
 import io.onedev.server.model.support.issue.changedata.IssueTitleChangeData;
 import io.onedev.server.model.support.issue.field.spec.ChoiceField;
 import io.onedev.server.model.support.issue.field.spec.FieldSpec;
@@ -183,9 +184,11 @@ public class ImportUtils {
 			Map<String, Pair<FieldSpec, String>> priorityMappings = new HashMap<>();
 
 			Map<String, Milestone> milestoneMappings = new HashMap<>();
-			Map<String, String> versionsMappings = new HashMap<>();
-			Map<String, String> statusesMappings = new HashMap<>();
 
+			Map<String, String> versionId2nameMap = new HashMap<>();
+			Map<String, String> statusId2nameMap = new HashMap<>();
+			Map<String, String> trackerId2nameMap = new HashMap<>();
+			Map<String, String> priorityId2nameMap = new HashMap<>();
 			Map<String, String> categoryId2nameMap = new HashMap<>();
 
 			GlobalIssueSetting issueSetting = getIssueSetting();
@@ -216,12 +219,19 @@ public class ImportUtils {
 
 			String versionsApiEndpoint = server.getApiEndpoint("/projects/" + redmineProjectId + "/versions.json");
 			for (JsonNode versionNode: list(client, versionsApiEndpoint, "versions", logger))
-				versionsMappings.put(versionNode.get("id").asText(), versionNode.get("name").asText());
+				versionId2nameMap.put(versionNode.get("id").asText(), versionNode.get("name").asText());
 
 			String statusesApiEndpoint = server.getApiEndpoint("/issue_statuses.json");
-			for (JsonNode statusNode: list(client, statusesApiEndpoint, "issue_statuses", logger)) {
-				statusesMappings.put(statusNode.get("id").asText(), statusNode.get("name").asText());
-			}
+			for (JsonNode statusNode: list(client, statusesApiEndpoint, "issue_statuses", logger))
+				statusId2nameMap.put(statusNode.get("id").asText(), statusNode.get("name").asText());
+
+			String trackersApiEndpoint = server.getApiEndpoint("/trackers.json");
+			for (JsonNode trackerNode: list(client, trackersApiEndpoint, "trackers", logger))
+				trackerId2nameMap.put(trackerNode.get("id").asText(), trackerNode.get("name").asText());
+
+			String prioritiesApiEndpoint = server.getApiEndpoint("/enumerations/issue_priorities.json");
+			for (JsonNode priorityNode: list(client, prioritiesApiEndpoint, "issue_priorities", logger))
+				priorityId2nameMap.put(priorityNode.get("id").asText(), priorityNode.get("name").asText());
 
 			String categoriesEndpoint = server.getApiEndpoint("/projects/" + redmineProjectId + "/issue_categories.json");
 			for (JsonNode categoryNode: list(client, categoriesEndpoint, "issue_categories", logger))
@@ -402,14 +412,31 @@ public class ImportUtils {
 											data = new IssueTitleChangeData(oldValue, newValue);
 										} else if ("description".equals(name)) {
 											// not migrated because OneDev does not support description history
+										} else if ("status_id".equals(name)) {
+											// do not convert Redmine status to OneDev state for change history
+											String oldStatus = statusId2nameMap.get(oldValue);
+											String newStatus = statusId2nameMap.get(newValue);
+											data = new IssueStateChangeData(oldStatus, newStatus, Collections.emptyMap(), Collections.emptyMap());
+										} else if ("tracker_id".equals(name)) {
+											// do not convert Redmine tracker to OneDev type for change history
+											String oldTracker = trackerId2nameMap.get(oldValue);
+											String newTracker = trackerId2nameMap.get(newValue);
+											addToFields("Type", oldTracker, oldFields);
+											addToFields("Type", newTracker, newFields);
+										} else if ("priority_id".equals(name)) {
+											// do not convert Redmine priority to OneDev priority for change history
+											String oldPriority = priorityId2nameMap.get(oldValue);
+											String newPriority = priorityId2nameMap.get(newValue);
+											addToFields("Priority", oldPriority, oldFields);
+											addToFields("Priority", newPriority, newFields);
 										} else if ("category_id".equals(name)) {
 											String oldCategory = categoryId2nameMap.get(oldValue);
 											String newCategory = categoryId2nameMap.get(newValue);
 											addToFields(importOption.getCategoryIssueField(), oldCategory, oldFields);
 											addToFields(importOption.getCategoryIssueField(), newCategory, newFields);
 										} else if ("fixed_version_id".equals(name)) {
-											String oldVersion = versionsMappings.get(oldValue);
-											String newVersion = versionsMappings.get(newValue);
+											String oldVersion = versionId2nameMap.get(oldValue);
+											String newVersion = versionId2nameMap.get(newValue);
 											if (oldVersion != null && newVersion != null) {
 												Milestone oldMilestone = new Milestone();
 												Milestone newMilestone = new Milestone();
