@@ -65,10 +65,18 @@ public class ImportUtils {
 
 	static final String NAME = "Redmine";
 
+	private static final Map<String, String> statusDefaultFields = new HashMap<>();
 	private static final Map<String, String> trackerDefaultFields = new HashMap<>();
 	private static final Map<String, String> priorityDefaultFields = new HashMap<>();
 
 	static {
+		statusDefaultFields.put("New", "Open");
+		statusDefaultFields.put("In Progress", "Open");
+		statusDefaultFields.put("Resolved", "Open");
+		statusDefaultFields.put("Feedback", "Open");
+		statusDefaultFields.put("Closed", "Closed");
+		statusDefaultFields.put("Rejected", "Closed");
+
 		trackerDefaultFields.put("Bug", "Type::Bug");
 		trackerDefaultFields.put("Feature", "Type::New Feature");
 		trackerDefaultFields.put("Task", "Type::Task");
@@ -84,6 +92,11 @@ public class ImportUtils {
 		IssueImportOption importOption = new IssueImportOption();
 		Client client = server.newClient();
 		try {
+			Set<String> statuses = new LinkedHashSet<>();
+			String statusesApiEndpoint = server.getApiEndpoint("/issue_statuses.json");
+			for (JsonNode trackerNode: list(client, statusesApiEndpoint, "issue_statuses", logger))
+				statuses.add(trackerNode.get("name").asText());
+
 			Set<String> trackers = new LinkedHashSet<>();
 			String trackersApiEndpoint = server.getApiEndpoint("/trackers.json");
 			for (JsonNode trackerNode: list(client, trackersApiEndpoint, "trackers", logger))
@@ -94,17 +107,36 @@ public class ImportUtils {
 			for (JsonNode priorityNode: list(client, prioritiesApiEndpoint, "issue_priorities", logger))
 				priorities.add(priorityNode.get("name").asText());
 
+			List<String> stateChoices = IssueStatusMapping.getOneDevIssueStateChoices();
+			for (String status: statuses) {
+				String defaultState = stateChoices.contains(status)
+						? status
+						: statusDefaultFields.get(status);
+				IssueStatusMapping mapping = new IssueStatusMapping();
+				mapping.setRedmineIssueStatus(status);
+				mapping.setOneDevIssueState(defaultState);
+				importOption.getIssueStatusMappings().add(mapping);
+			}
+
+			List<String> trackerFieldChoices = IssueTrackerMapping.getOneDevIssueFieldChoices();
 			for (String tracker: trackers) {
+				String defaultField = trackerFieldChoices.contains("Type::" + tracker)
+						? "Type::" + tracker
+						: trackerDefaultFields.get(tracker);
 				IssueTrackerMapping mapping = new IssueTrackerMapping();
 				mapping.setRedmineIssueTracker(tracker);
-				mapping.setOneDevIssueField(trackerDefaultFields.get(tracker));
+				mapping.setOneDevIssueField(defaultField);
 				importOption.getIssueTrackerMappings().add(mapping);
 			}
 
+			List<String> priorityFieldChoices = IssuePriorityMapping.getOneDevIssueFieldChoices();
 			for (String priority: priorities) {
+				String defaultField = priorityFieldChoices.contains("Priority::" + priority)
+						? "Priority::" + priority
+						: priorityDefaultFields.get(priority);
 				IssuePriorityMapping mapping = new IssuePriorityMapping();
 				mapping.setRedmineIssuePriority(priority);
-				mapping.setOneDevIssueField(priorityDefaultFields.get(priority));
+				mapping.setOneDevIssueField(defaultField);
 				importOption.getIssuePriorityMappings().add(mapping);
 			}
 		} finally {
@@ -146,17 +178,20 @@ public class ImportUtils {
 			Set<String> unmappedIssuePriorities = new HashSet<>();
 			Set<String> resultNotes = new LinkedHashSet<>();
 
+			Map<String, String> statusMappings = new HashMap<>();
 			Map<String, Pair<FieldSpec, String>> trackerMappings = new HashMap<>();
 			Map<String, Pair<FieldSpec, String>> priorityMappings = new HashMap<>();
 
 			Map<String, Milestone> milestoneMappings = new HashMap<>();
 			Map<String, String> versionsMappings = new HashMap<>();
 			Map<String, String> statusesMappings = new HashMap<>();
-			Set<String> closedStatuses = new HashSet<>();
 
 			Map<String, String> categoryId2nameMap = new HashMap<>();
 
 			GlobalIssueSetting issueSetting = getIssueSetting();
+
+			for (IssueStatusMapping mapping: importOption.getIssueStatusMappings())
+				statusMappings.put(mapping.getRedmineIssueStatus(), mapping.getOneDevIssueState());
 
 			for (IssueTrackerMapping mapping: importOption.getIssueTrackerMappings()) {
 				String oneDevFieldName = StringUtils.substringBefore(mapping.getOneDevIssueField(), "::");
@@ -186,8 +221,6 @@ public class ImportUtils {
 			String statusesApiEndpoint = server.getApiEndpoint("/issue_statuses.json");
 			for (JsonNode statusNode: list(client, statusesApiEndpoint, "issue_statuses", logger)) {
 				statusesMappings.put(statusNode.get("id").asText(), statusNode.get("name").asText());
-				if (statusNode.has("is_closed") && statusNode.get("is_closed").asBoolean())
-					closedStatuses.add(statusNode.get("name").asText());
 			}
 
 			String categoriesEndpoint = server.getApiEndpoint("/projects/" + redmineProjectId + "/issue_categories.json");
@@ -240,12 +273,8 @@ public class ImportUtils {
 
 						// status --> state
 						String status = issueNode.get("status").get("name").asText();
-						if (closedStatuses.contains(status)) {
-							issue.setState("Rejected".equals(status)
-									? importOption.getRejectedIssueState()
-									: importOption.getClosedIssueState());
-						} else
-							issue.setState(initialIssueState);
+						String state = statusMappings.getOrDefault(status, initialIssueState);
+						issue.setState(state);
 
 						// fixed_version ("Target version") --> milestone
 						if (issueNode.hasNonNull("fixed_version")) {

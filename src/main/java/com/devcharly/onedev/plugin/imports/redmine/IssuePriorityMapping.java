@@ -44,8 +44,7 @@ public class IssuePriorityMapping implements Serializable {
 		this.oneDevIssueField = oneDevIssueField;
 	}
 
-	@SuppressWarnings("unused")
-	private static List<String> getOneDevIssueFieldChoices() {
+	static List<String> getOneDevIssueFieldChoices() {
 		List<String> choices = new ArrayList<>();
 		GlobalIssueSetting issueSetting = OneDev.getInstance(SettingManager.class).getIssueSetting();
 		for (FieldSpec field: issueSetting.getFieldSpecs()) {

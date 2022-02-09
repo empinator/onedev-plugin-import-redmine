@@ -3,7 +3,6 @@ package com.devcharly.onedev.plugin.imports.redmine;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 import javax.annotation.Nullable;
 
@@ -26,12 +25,10 @@ public class IssueImportOption implements Serializable {
 
 	private boolean importVersions;
 
-	private String closedIssueState = "Closed";
-	private String rejectedIssueState = "Rejected";
-
 	private String assigneesIssueField = "Assignees";
 	private String categoryIssueField = "Category";
 
+	private List<IssueStatusMapping> issueStatusMappings = new ArrayList<>();
 	private List<IssueTrackerMapping> issueTrackerMappings = new ArrayList<>();
 	private List<IssuePriorityMapping> issuePriorityMappings = new ArrayList<>();
 
@@ -55,40 +52,8 @@ public class IssueImportOption implements Serializable {
 		this.importVersions = importVersions;
 	}
 
-	@Editable(order=300, description="Specify which issue state to use for closed Redmine issues.<br>"
-			+ "<b>NOTE: </b> You may customize OneDev issue states in case there is no appropriate option here")
-	@ChoiceProvider("getCloseStateChoices")
-	@NotEmpty
-	public String getClosedIssueState() {
-		return closedIssueState;
-	}
-
-	public void setClosedIssueState(String closedIssueState) {
-		this.closedIssueState = closedIssueState;
-	}
-
-	@Editable(order=301, description="Specify which issue state to use for rejected Redmine issues.<br>"
-			+ "<b>NOTE: </b> You may customize OneDev issue states in case there is no appropriate option here")
-	@ChoiceProvider("getCloseStateChoices")
-	@NotEmpty
-	public String getRejectedIssueState() {
-		return rejectedIssueState;
-	}
-
-	public void setRejectedIssueState(String rejectedIssueState) {
-		this.rejectedIssueState = rejectedIssueState;
-	}
-
 	private static GlobalIssueSetting getIssueSetting() {
 		return OneDev.getInstance(SettingManager.class).getIssueSetting();
-	}
-
-	@SuppressWarnings("unused")
-	private static List<String> getCloseStateChoices() {
-		List<String> choices = getIssueSetting().getStateSpecs().stream()
-				.map(it->it.getName()).collect(Collectors.toList());
-		choices.remove(0);
-		return choices;
 	}
 
 	@Editable(order=350, description="Specify a multi-value user field to hold assignees information.<br>"
@@ -122,6 +87,16 @@ public class IssueImportOption implements Serializable {
 
 	public void setCategoryIssueField(String categoryIssueField) {
 		this.categoryIssueField = categoryIssueField;
+	}
+
+	@Editable(order=600, description="Specify how to map Redmine issue statuses to OneDev custom fields.<br>"
+			+ "<b>NOTE: </b> You may customize OneDev issue states in case there is no appropriate option here")
+	public List<IssueStatusMapping> getIssueStatusMappings() {
+		return issueStatusMappings;
+	}
+
+	public void setIssueStatusMappings(List<IssueStatusMapping> issueStatusMappings) {
+		this.issueStatusMappings = issueStatusMappings;
 	}
 
 	@Editable(order=700, description="Specify how to map Redmine issue trackers to OneDev custom fields.<br>"
