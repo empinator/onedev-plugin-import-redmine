@@ -66,6 +66,8 @@ public class ImportUtils {
 
 	static final String NAME = "Redmine";
 
+	static final int PER_PAGE = 50;
+
 	private static final Map<String, String> statusDefaultFields = new HashMap<>();
 	private static final Map<String, String> trackerDefaultFields = new HashMap<>();
 	private static final Map<String, String> priorityDefaultFields = new HashMap<>();
@@ -158,7 +160,7 @@ public class ImportUtils {
 					userOpt = Optional.ofNullable(OneDev.getInstance(UserManager.class).findByEmail(email));
 				else
 					userOpt = Optional.empty();
-			} catch (ExplicitException ex) {
+			} catch (ExplicitException|NullPointerException ex) {
 				// Redmine returns status 404 for unknown users
 				userOpt = Optional.empty();
 			}
@@ -250,7 +252,6 @@ public class ImportUtils {
 
 				@Override
 				public void consume(List<JsonNode> pageData) throws InterruptedException {
-					logger.log("Importing issues from project " + redmineProject + "...");
 					for (JsonNode issueNode: pageData) {
 						if (Thread.interrupted())
 							throw new InterruptedException();
@@ -506,6 +507,8 @@ public class ImportUtils {
 
 			};
 
+			logger.log("Importing issues from project " + redmineProject + "...");
+
 			String apiEndpoint = server.getApiEndpoint("/issues.json?project_id=" + redmineProjectId + "&status_id=*&sort=id");
 			list(client, apiEndpoint, "issues", pageDataConsumer, logger);
 
@@ -673,6 +676,7 @@ public class ImportUtils {
 				URIBuilder builder = new URIBuilder(uri);
 				if (offset > 0)
 					builder.addParameter("offset", String.valueOf(offset));
+				builder.addParameter("limit", String.valueOf(PER_PAGE));
 				List<JsonNode> pageData = new ArrayList<>();
 				JsonNode resultNode = JerseyUtils.get(client, builder.build().toString(), logger);
 				JsonNode dataNode = resultNode.get(dataNodeName);
@@ -683,7 +687,7 @@ public class ImportUtils {
 				if (totalCountNode == null)
 					break;
 				int totalCount = totalCountNode.asInt();
-				if (offset + pageData.size() <= totalCount)
+				if (offset + pageData.size() >= totalCount)
 					break;
 				offset += pageData.size();
 			} catch (URISyntaxException|InterruptedException e) {
