@@ -110,6 +110,13 @@ public class ImportUtils {
 			for (JsonNode priorityNode: list(client, prioritiesApiEndpoint, "issue_priorities", logger))
 				priorities.add(priorityNode.get("name").asText());
 
+			Set<String> customFields = new LinkedHashSet<>();
+			String customFieldsApiEndpoint = server.getApiEndpoint("/custom_fields.json");
+			for (JsonNode priorityNode: list(client, customFieldsApiEndpoint, "custom_fields", logger)) {
+				if ("issue".equals(priorityNode.get("customized_type").asText()))
+					customFields.add(priorityNode.get("name").asText());
+			}
+
 			List<String> stateChoices = IssueStatusMapping.getOneDevIssueStateChoices();
 			for (String status: statuses) {
 				String defaultState = stateChoices.contains(status)
@@ -141,6 +148,17 @@ public class ImportUtils {
 				mapping.setRedmineIssuePriority(priority);
 				mapping.setOneDevIssueField(defaultField);
 				importOption.getIssuePriorityMappings().add(mapping);
+			}
+
+			List<String> customFieldFieldChoices = IssueFieldMapping.getOneDevIssueFieldChoices();
+			for (String customField: customFields) {
+				String defaultField = customFieldFieldChoices.contains(customField)
+						? customField
+						: null;
+				IssueFieldMapping mapping = new IssueFieldMapping();
+				mapping.setRedmineIssueField(customField);
+				mapping.setOneDevIssueField(defaultField);
+				importOption.getIssueFieldMappings().add(mapping);
 			}
 		} finally {
 			client.close();
@@ -179,11 +197,13 @@ public class ImportUtils {
 			Set<String> nonExistentLogins = new HashSet<>();
 			Set<String> unmappedIssueTypes = new HashSet<>();
 			Set<String> unmappedIssuePriorities = new HashSet<>();
+			Set<String> unmappedIssueFields = new HashSet<>();
 			Set<String> resultNotes = new LinkedHashSet<>();
 
 			Map<String, String> statusMappings = new HashMap<>();
 			Map<String, Pair<FieldSpec, String>> trackerMappings = new HashMap<>();
 			Map<String, Pair<FieldSpec, String>> priorityMappings = new HashMap<>();
+			Map<String, FieldSpec> fieldMappings = new HashMap<>();
 
 			Map<String, Milestone> milestoneMappings = new HashMap<>();
 
@@ -192,6 +212,7 @@ public class ImportUtils {
 			Map<String, String> trackerId2nameMap = new HashMap<>();
 			Map<String, String> priorityId2nameMap = new HashMap<>();
 			Map<String, String> categoryId2nameMap = new HashMap<>();
+			Map<String, String> fieldId2nameMap = new HashMap<>();
 
 			GlobalIssueSetting issueSetting = getIssueSetting();
 
@@ -214,6 +235,14 @@ public class ImportUtils {
 				if (fieldSpec == null)
 					throw new ExplicitException("No field spec found: " + oneDevFieldName);
 				priorityMappings.put(mapping.getRedmineIssuePriority(), new Pair<>(fieldSpec, oneDevFieldValue));
+			}
+
+			for (IssueFieldMapping mapping: importOption.getIssueFieldMappings()) {
+				String oneDevFieldName = mapping.getOneDevIssueField();
+				FieldSpec fieldSpec = issueSetting.getFieldSpec(oneDevFieldName);
+				if (fieldSpec == null)
+					throw new ExplicitException("No field spec found: " + oneDevFieldName);
+				fieldMappings.put(mapping.getRedmineIssueField(), fieldSpec);
 			}
 
 			for (Milestone milestone: oneDevProject.getMilestones())
@@ -239,6 +268,10 @@ public class ImportUtils {
 			for (JsonNode categoryNode: list(client, categoriesEndpoint, "issue_categories", logger))
 				categoryId2nameMap.put(categoryNode.get("id").asText(), categoryNode.get("name").asText());
 
+			String customFieldsApiEndpoint = server.getApiEndpoint("/custom_fields.json");
+			for (JsonNode customFieldNode: list(client, customFieldsApiEndpoint, "custom_fields", logger))
+				fieldId2nameMap.put(customFieldNode.get("id").asText(), customFieldNode.get("name").asText());
+
 			importIssueCategories(server, redmineProject, importOption, dryRun, logger);
 
 			String initialIssueState = issueSetting.getInitialStateSpec().getName();
@@ -249,6 +282,13 @@ public class ImportUtils {
 
 			AtomicInteger numOfImportedIssues = new AtomicInteger(0);
 			PageDataConsumer pageDataConsumer = new PageDataConsumer() {
+
+				private String joinAsMultilineHtml(List<String> values) {
+					List<String> escapedValues = new ArrayList<>();
+					for (String value: values)
+						escapedValues.add(HtmlEscape.escapeHtml5(value));
+					return StringUtils.join(escapedValues, "<br>");
+				}
 
 				@Override
 				public void consume(List<JsonNode> pageData) throws InterruptedException {
@@ -366,6 +406,43 @@ public class ImportUtils {
 						String categoryValue = (categoryNode != null) ? categoryNode.get("name").asText() : null;
 						issue.setFieldValue(importOption.getCategoryIssueField(), categoryValue);
 
+						// custom_fields
+						JsonNode customFieldsNode = issueNode.get("custom_fields");
+						if (customFieldsNode != null) {
+							for (JsonNode customFieldNode : customFieldsNode) {
+								String fieldName = customFieldNode.get("name").asText();
+								JsonNode valueNode = customFieldNode.get("value");
+								if (valueNode == null)
+									continue;
+
+								Object value;
+								if (valueNode.isArray()) {
+									List<String> values = new ArrayList<>();
+									for (JsonNode node : valueNode)
+										values.add(node.asText());
+									if (values.isEmpty())
+										continue;
+									value = values;
+								} else {
+									value = valueNode.asText();
+									if (((String)value).isEmpty())
+										continue;
+								}
+
+								FieldSpec mapped = fieldMappings.get(fieldName);
+								if (mapped != null) {
+									issue.setFieldValue(fieldName, value);
+								} else {
+									@SuppressWarnings("unchecked")
+									String v = (value instanceof List)
+										? joinAsMultilineHtml((List<String>)value)
+										: HtmlEscape.escapeHtml5((String) value);
+									extraIssueInfo.put(fieldName, v);
+									unmappedIssueFields.add(fieldName);
+								}
+							}
+						}
+
 						// journals ("History") --> comments, changes
 						String apiEndpoint = server.getApiEndpoint("/issues/" + oldNumber + ".json?include=journals");
 						JsonNode journalsNode = JerseyUtils.get(client, apiEndpoint, logger).get("issue").get("journals");
@@ -454,6 +531,17 @@ public class ImportUtils {
 												"Unknown history property name '%s' in Redmine issue <a href=\"%s\">#%d</a> (<a href=\"%s\">JSON</a>)",
 												HtmlEscape.escapeHtml5(name), server.getApiEndpoint("/issues/" + oldNumber), oldNumber, apiEndpoint));
 										}
+									} else if ("cf".equals(property)) {
+										// custom fields
+										String fieldName = fieldId2nameMap.get(name);
+										if (fieldName != null) {
+											addToFields(fieldName, oldValue, oldFields);
+											addToFields(fieldName, newValue, newFields);
+										} else {
+											resultNotes.add(String.format(
+												"Unknown history custom field '%s' in Redmine issue <a href=\"%s\">#%d</a> (<a href=\"%s\">JSON</a>)",
+												HtmlEscape.escapeHtml5(name), server.getApiEndpoint("/issues/" + oldNumber), oldNumber, apiEndpoint));
+										}
 									} else {
 										resultNotes.add(String.format(
 											"Unknown history property '%s' in Redmine issue <a href=\"%s\">#%d</a> (<a href=\"%s\">JSON</a>)",
@@ -538,6 +626,7 @@ public class ImportUtils {
 			result.nonExistentMilestones.addAll(nonExistentMilestones);
 			result.unmappedIssueTypes.addAll(unmappedIssueTypes);
 			result.unmappedIssuePriorities.addAll(unmappedIssuePriorities);
+			result.unmappedIssueFields.addAll(unmappedIssueFields);
 			result.notes.addAll(resultNotes);
 
 			if (numOfImportedIssues.get() != 0)
@@ -550,7 +639,7 @@ public class ImportUtils {
 	}
 
 	private static void addToFields(String fieldName, String value, Map<String, Input> fields) {
-		if (value != null)
+		if (value != null && !value.isEmpty())
 			fields.put(fieldName, new Input(fieldName, InputSpec.ENUMERATION, Collections.singletonList(value)));
 	}
 

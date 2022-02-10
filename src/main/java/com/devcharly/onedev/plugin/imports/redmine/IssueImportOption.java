@@ -31,6 +31,7 @@ public class IssueImportOption implements Serializable {
 	private List<IssueStatusMapping> issueStatusMappings = new ArrayList<>();
 	private List<IssueTrackerMapping> issueTrackerMappings = new ArrayList<>();
 	private List<IssuePriorityMapping> issuePriorityMappings = new ArrayList<>();
+	private List<IssueFieldMapping> issueFieldMappings = new ArrayList<>();
 
 	@Editable(order=100, name="Import Issues")
 	@Nullable
@@ -117,6 +118,17 @@ public class IssueImportOption implements Serializable {
 
 	public void setIssuePriorityMappings(List<IssuePriorityMapping> issuePriorityMappings) {
 		this.issuePriorityMappings = issuePriorityMappings;
+	}
+
+	@Editable(order=380, description="Specify how to map Redmine custom issue fields to OneDev. Unmapped fields will "
+			+ "be reflected in issue description.<br>"
+			+ "<b>Note: </b> You may customize OneDev issue fields in case there is no appropriate option here")
+	public List<IssueFieldMapping> getIssueFieldMappings() {
+		return issueFieldMappings;
+	}
+
+	public void setIssueFieldMappings(List<IssueFieldMapping> issueFieldMappings) {
+		this.issueFieldMappings = issueFieldMappings;
 	}
 
 }
