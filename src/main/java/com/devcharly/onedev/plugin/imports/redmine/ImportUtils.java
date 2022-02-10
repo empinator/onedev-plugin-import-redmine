@@ -1,5 +1,7 @@
 package com.devcharly.onedev.plugin.imports.redmine;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
@@ -18,6 +20,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.annotation.Nullable;
 import javax.ws.rs.client.Client;
+import javax.ws.rs.client.Invocation;
+import javax.ws.rs.client.WebTarget;
+import javax.ws.rs.core.Response;
 
 import org.apache.commons.lang.StringUtils;
 import org.apache.http.client.utils.URIBuilder;
@@ -199,6 +204,7 @@ public class ImportUtils {
 			Set<String> unmappedIssueTypes = new HashSet<>();
 			Set<String> unmappedIssuePriorities = new HashSet<>();
 			Set<String> unmappedIssueFields = new HashSet<>();
+			Set<String> tooLargeAttachments = new LinkedHashSet<>();
 			Set<String> resultNotes = new LinkedHashSet<>();
 
 			Map<String, String> statusMappings = new HashMap<>();
@@ -288,6 +294,64 @@ public class ImportUtils {
 
 			AtomicInteger numOfImportedIssues = new AtomicInteger(0);
 			PageDataConsumer pageDataConsumer = new PageDataConsumer() {
+
+				@Nullable
+				private String processAttachments(String issueUUID, String readableIssueId, @Nullable String markdown,
+						List<JsonNode> attachmentNodes, Set<String> tooLargeAttachments) {
+					if (markdown == null)
+						markdown = "";
+
+					String attachmentsLinks = "";
+
+					long maxUploadFileSize = OneDev.getInstance(SettingManager.class)
+							.getPerformanceSetting().getMaxUploadFileSize()*1L*1024*1024;
+					for (JsonNode attachmentNode: attachmentNodes) {
+						String attachmentName = attachmentNode.get("filename").asText(null);
+						String attachmentUrl = attachmentNode.get("content_url").asText(null);
+						long attachmentSize = attachmentNode.get("filesize").asLong(0);
+						if (attachmentSize != 0 && attachmentName != null && attachmentUrl != null) {
+							if (attachmentSize >  maxUploadFileSize) {
+								tooLargeAttachments.add(readableIssueId + ":" + attachmentName);
+							} else {
+								String endpoint = attachmentUrl;
+								WebTarget target = client.target(endpoint);
+								Invocation.Builder builder =  target.request();
+								try (Response response = builder.get()) {
+									String errorMessage = JerseyUtils.checkStatus(endpoint, response);
+									if (errorMessage != null) {
+										throw new ExplicitException(String.format(
+												"Error downloading attachment (url: %s, error message: %s)",
+												endpoint, errorMessage));
+									}
+									try (InputStream is = response.readEntity(InputStream.class)) {
+										String oneDevAttachmentName = oneDevProject.saveAttachment(issueUUID, attachmentName, is);
+										String oneDevAttachmentUrl = oneDevProject.getAttachmentUrlPath(issueUUID, oneDevAttachmentName);
+										if (markdown.contains("(" + attachmentName + ")")) {
+											markdown = markdown.replace("(" + attachmentName + ")", "(" + oneDevAttachmentUrl + ")");
+										}
+
+										String description = attachmentNode.get("description").asText();
+										attachmentsLinks += "[" + attachmentName + "](" + oneDevAttachmentUrl + ")"
+												+ (!description.isEmpty() ? " - " + description : "")
+												+ " (" + attachmentNode.get("author").get("name").asText()
+												+ ", " + attachmentNode.get("created_on").asText() + ")\n";
+									} catch (IOException e) {
+										throw new RuntimeException(e);
+									}
+								}
+
+							}
+						}
+					}
+
+					if (!attachmentsLinks.isEmpty())
+						markdown += "\n\n**Attachments:**\n" + attachmentsLinks;
+
+					if (markdown.length() == 0)
+						markdown = null;
+
+					return markdown;
+				}
 
 				private String joinAsMultilineHtml(List<String> values) {
 					List<String> escapedValues = new ArrayList<>();
@@ -450,7 +514,7 @@ public class ImportUtils {
 						}
 
 						// get additional issue information
-						String apiEndpoint = server.getApiEndpoint("/issues/" + oldNumber + ".json?include=watchers,journals");
+						String apiEndpoint = server.getApiEndpoint("/issues/" + oldNumber + ".json?include=watchers,attachments,journals");
 						JsonNode issueNode2 = JerseyUtils.get(client, apiEndpoint, logger).get("issue");
 
 						// watchers --> watches
@@ -469,6 +533,18 @@ public class ImportUtils {
 									user = OneDev.getInstance(UserManager.class).getUnknown();
 									nonExistentLogins.add(watcherNode.get("name").asText() + ":" + login);
 								}
+							}
+						}
+
+						// attachments
+						JsonNode attachmentsNode = issueNode2.get("attachments");
+						if (!dryRun && attachmentsNode != null) {
+							List<JsonNode> attachmentNodes = new ArrayList<>();
+							for (JsonNode attachmentNode: attachmentsNode)
+								attachmentNodes.add(attachmentNode);
+							if (!attachmentNodes.isEmpty()) {
+								issue.setDescription(processAttachments(issue.getUUID(), "#" + oldNumber,
+										issue.getDescription(), attachmentNodes, tooLargeAttachments));
 							}
 						}
 
@@ -585,6 +661,8 @@ public class ImportUtils {
 												"Unknown history custom field '%s' in Redmine issue <a href=\"%s\">#%d</a> (<a href=\"%s\">JSON</a>)",
 												HtmlEscape.escapeHtml5(name), server.getApiEndpoint("/issues/" + oldNumber), oldNumber, apiEndpoint));
 										}
+									} else if ("attachment".equals(property)) {
+										// not migrated because OneDev does not support attachment history
 									} else {
 										resultNotes.add(String.format(
 											"Unknown history property '%s' in Redmine issue <a href=\"%s\">#%d</a> (<a href=\"%s\">JSON</a>)",
@@ -672,10 +750,8 @@ public class ImportUtils {
 			result.unmappedIssueTypes.addAll(unmappedIssueTypes);
 			result.unmappedIssuePriorities.addAll(unmappedIssuePriorities);
 			result.unmappedIssueFields.addAll(unmappedIssueFields);
+			result.tooLargeAttachments.addAll(tooLargeAttachments);
 			result.notes.addAll(resultNotes);
-
-			if (numOfImportedIssues.get() != 0)
-				result.issuesImported = true;
 
 			return result;
 		} finally {

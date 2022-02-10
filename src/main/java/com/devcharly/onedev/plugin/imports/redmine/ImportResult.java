@@ -3,6 +3,7 @@ package com.devcharly.onedev.plugin.imports.redmine;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -17,12 +18,11 @@ public class ImportResult {
 	Set<String> unmappedIssueTypes = new HashSet<>();
 	Set<String> unmappedIssuePriorities = new HashSet<>();
 	Set<String> unmappedIssueFields = new HashSet<>();
+	Set<String> tooLargeAttachments = new LinkedHashSet<>();
 
 	Set<String> nonExistentMilestones = new HashSet<>();
 
 	List<String> notes = new ArrayList<>();
-
-	boolean issuesImported = false;
 
 	private String getEntryFeedback(String entryDescription, Collection<String> entries) {
 		if (entries.size() > MAX_DISPLAY_ENTRIES) {
@@ -40,7 +40,7 @@ public class ImportResult {
 
 		if (!nonExistentMilestones.isEmpty() || !unmappedIssueTypes.isEmpty()
 				|| !unmappedIssuePriorities.isEmpty() || !unmappedIssueFields.isEmpty()
-				|| !nonExistentLogins.isEmpty() || !notes.isEmpty() || issuesImported) {
+				|| !nonExistentLogins.isEmpty() || !tooLargeAttachments.isEmpty() || !notes.isEmpty()) {
 			hasNotice = true;
 		}
 
@@ -64,6 +64,9 @@ public class ImportResult {
 		if (!nonExistentLogins.isEmpty()) {
 			feedback.append(getEntryFeedback("Redmine logins without public email or public email can not be mapped to OneDev account",
 					nonExistentLogins));
+		}
+		if (!tooLargeAttachments.isEmpty()) {
+			feedback.append(getEntryFeedback("Too large attachments", tooLargeAttachments));
 		}
 		if (!notes.isEmpty()) {
 			int size = Math.min(notes.size(), MAX_DISPLAY_ENTRIES);
