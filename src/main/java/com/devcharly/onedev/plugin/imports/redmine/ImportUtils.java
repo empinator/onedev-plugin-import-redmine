@@ -208,6 +208,7 @@ public class ImportUtils {
 
 			Map<String, Milestone> milestoneMappings = new HashMap<>();
 
+			Map<String, String> userId2nameMap = new HashMap<>();
 			Map<String, String> versionId2nameMap = new HashMap<>();
 			Map<String, String> statusId2nameMap = new HashMap<>();
 			Map<String, String> trackerId2nameMap = new HashMap<>();
@@ -248,6 +249,10 @@ public class ImportUtils {
 
 			for (Milestone milestone: oneDevProject.getMilestones())
 				milestoneMappings.put(milestone.getName(), milestone);
+
+			String usersApiEndpoint = server.getApiEndpoint("/users.json");
+			for (JsonNode userNode: list(client, usersApiEndpoint, "users", logger))
+				userId2nameMap.put(userNode.get("id").asText(), userNode.get("firstname").asText() + " " + userNode.get("lastname").asText());
 
 			String versionsApiEndpoint = server.getApiEndpoint("/projects/" + redmineProjectId + "/versions.json");
 			for (JsonNode versionNode: list(client, versionsApiEndpoint, "versions", logger))
@@ -530,6 +535,21 @@ public class ImportUtils {
 											String newPriority = priorityId2nameMap.get(newValue);
 											addToFields("Priority", oldPriority, oldFields);
 											addToFields("Priority", newPriority, newFields);
+										} else if ("assigned_to_id".equals(name)) {
+											if (oldValue != null) {
+												User oldUser = getUser(client, server, users, oldValue, logger);
+												if (oldUser != null)
+													addToFields(importOption.getAssigneesIssueField(), oldUser.getName(), oldFields);
+												else
+													nonExistentLogins.add(userId2nameMap.getOrDefault(oldValue, "") + ":" + oldValue);
+											}
+											if (newValue != null) {
+												User newUser = getUser(client, server, users, newValue, logger);
+												if (newUser != null)
+													addToFields(importOption.getAssigneesIssueField(), newUser.getName(), newFields);
+												else
+													nonExistentLogins.add(userId2nameMap.getOrDefault(newValue, "") + ":" + newValue);
+											}
 										} else if ("category_id".equals(name)) {
 											String oldCategory = categoryId2nameMap.get(oldValue);
 											String newCategory = categoryId2nameMap.get(newValue);
