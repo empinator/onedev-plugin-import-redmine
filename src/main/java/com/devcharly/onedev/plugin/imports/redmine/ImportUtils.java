@@ -39,6 +39,7 @@ import io.onedev.server.model.IssueChange;
 import io.onedev.server.model.IssueComment;
 import io.onedev.server.model.IssueField;
 import io.onedev.server.model.IssueSchedule;
+import io.onedev.server.model.IssueWatch;
 import io.onedev.server.model.Milestone;
 import io.onedev.server.model.Project;
 import io.onedev.server.model.User;
@@ -443,9 +444,31 @@ public class ImportUtils {
 							}
 						}
 
+						// get additional issue information
+						String apiEndpoint = server.getApiEndpoint("/issues/" + oldNumber + ".json?include=watchers,journals");
+						JsonNode issueNode2 = JerseyUtils.get(client, apiEndpoint, logger).get("issue");
+
+						// watchers --> watches
+						JsonNode watchersNode = issueNode2.get("watchers");
+						if (watchersNode != null) {
+							for (JsonNode watcherNode: watchersNode) {
+								login = watcherNode.get("id").asText();
+								user = getUser(client, server, users, login, logger);
+								if (user != null) {
+									IssueWatch watch = new IssueWatch();
+									watch.setIssue(issue);
+									watch.setUser(user);
+									watch.setWatching(true);
+									issue.getWatches().add(watch);
+								} else {
+									user = OneDev.getInstance(UserManager.class).getUnknown();
+									nonExistentLogins.add(watcherNode.get("name").asText() + ":" + login);
+								}
+							}
+						}
+
 						// journals ("History") --> comments, changes
-						String apiEndpoint = server.getApiEndpoint("/issues/" + oldNumber + ".json?include=journals");
-						JsonNode journalsNode = JerseyUtils.get(client, apiEndpoint, logger).get("issue").get("journals");
+						JsonNode journalsNode = issueNode2.get("journals");
 						for (JsonNode journalNode: journalsNode) {
 							login = journalNode.get("user").get("id").asText();
 							user = getUser(client, server, users, login, logger);
@@ -617,6 +640,8 @@ public class ImportUtils {
 						dao.persist(comment);
 					}
 					for (IssueChange change: issue.getChanges())
+						dao.persist(change);
+					for (IssueWatch change: issue.getWatches())
 						dao.persist(change);
 				}
 			}
