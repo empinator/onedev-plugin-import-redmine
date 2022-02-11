@@ -561,17 +561,17 @@ public class ImportUtils {
 									.parseDateTime(journalNode.get("created_on").asText())
 									.toDate();
 
+							IssueComment comment = null;
 							JsonNode notesNode = journalNode.get("notes");
 							String notes = (notesNode != null) ? notesNode.asText() : "";
 							if (!notes.isEmpty()) {
-								IssueComment comment = new IssueComment();
+								comment = new IssueComment();
 								comment.setIssue(issue);
 								comment.setContent(notes);
 								comment.setUser(user);
 								comment.setDate(createdOn);
 
-								issue.getComments().add(comment);
-								issue.setCommentCount(issue.getComments().size());
+								issue.setCommentCount(issue.getCommentCount() + 1);
 
 								lastUpdate.setActivity("commented");
 								lastUpdate.setDate(comment.getDate());
@@ -679,6 +679,11 @@ public class ImportUtils {
 										issueChange.setUser(user);
 										issueChange.setData(data);
 
+										if (comment != null && data instanceof IssueStateChangeData) {
+											issueChange.setComment(comment.getContent());
+											comment = null;
+										}
+
 										issue.getChanges().add(issueChange);
 
 										lastUpdate.setActivity(issueChange.getData().getActivity());
@@ -694,6 +699,11 @@ public class ImportUtils {
 									issueChange.setUser(user);
 									issueChange.setData(new IssueFieldChangeData(oldFields, newFields));
 
+									if (comment != null) {
+										issueChange.setComment(comment.getContent());
+										comment = null;
+									}
+
 									issue.getChanges().add(issueChange);
 
 									lastUpdate.setActivity(issueChange.getData().getActivity());
@@ -701,6 +711,9 @@ public class ImportUtils {
 									lastUpdate.setUser(issueChange.getUser());
 								}
 							}
+
+							if (comment != null)
+								issue.getComments().add(comment);
 						}
 
 						if (!extraIssueInfo.isEmpty()) {
@@ -750,8 +763,12 @@ public class ImportUtils {
 						comment.setContent(migrator.migratePrefixed(comment.getContent(),  "#"));
 						dao.persist(comment);
 					}
-					for (IssueChange change: issue.getChanges())
+					for (IssueChange change: issue.getChanges()) {
+						String comment = change.getComment();
+						if (comment != null)
+							change.setComment(migrator.migratePrefixed(comment, "#"));
 						dao.persist(change);
+					}
 					for (IssueWatch change: issue.getWatches())
 						dao.persist(change);
 				}
