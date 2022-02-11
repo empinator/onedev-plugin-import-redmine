@@ -36,7 +36,7 @@ public class RedmineIssueImporter extends IssueImporter<ImportServer, IssueImpor
 		}
 
 		Map<String, Optional<User>> users = new HashMap<>();
-		return importIssues(where, what.getProject(), project, false, how, users, dryRun, logger)
+		return importIssues(where, what.getProject(), project, how, users, dryRun, logger)
 				.toHtml("Issues imported successfully");
 	}
 

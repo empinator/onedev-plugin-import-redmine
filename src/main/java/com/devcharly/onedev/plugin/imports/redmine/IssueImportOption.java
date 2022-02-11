@@ -22,8 +22,8 @@ public class IssueImportOption implements Serializable {
 	private static final long serialVersionUID = 1L;
 
 	private boolean importIssues = true;
-
 	private boolean importVersions;
+	private boolean useExistingIssueIDs = true;
 
 	private String importIssueIDs;
 
@@ -53,6 +53,17 @@ public class IssueImportOption implements Serializable {
 
 	public void setImportVersions(boolean importVersions) {
 		this.importVersions = importVersions;
+	}
+
+	@Editable(order=220, name="Use existing issue IDs",
+			description = "If enabled, use existing Redmine issue IDs for OneDev issues."
+					+ " If disabled, imported issues (may) get different IDs.")
+	public boolean isUseExistingIssueIDs() {
+		return useExistingIssueIDs;
+	}
+
+	public void setUseExistingIssueIDs(boolean useExistingIssueIDs) {
+		this.useExistingIssueIDs = useExistingIssueIDs;
 	}
 
 	@Editable(order=250, name="Import Issue IDs", description="Redmine issue IDs to import (all if empty; multiple IDs separated by <code>,</code>; ID range separated by <code>-</code>; maximum 300 issues).")

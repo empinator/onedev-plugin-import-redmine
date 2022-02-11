@@ -194,7 +194,7 @@ public class ImportUtils {
 	}
 
 	static ImportResult importIssues(ImportServer server, String redmineProject, Project oneDevProject,
-			boolean useExistingIssueNumbers, IssueImportOption importOption, Map<String, Optional<User>> users,
+			IssueImportOption importOption, Map<String, Optional<User>> users,
 			boolean dryRun, TaskLogger logger) {
 		Client client = server.newClient();
 		try {
@@ -390,7 +390,9 @@ public class ImportUtils {
 						// issue id --> number
 						Long oldNumber = issueNode.get("id").asLong();
 						Long newNumber;
-						if (dryRun || useExistingIssueNumbers)
+						if (importOption.isUseExistingIssueIDs() && OneDev.getInstance(IssueManager.class).find(oneDevProject, oldNumber) != null)
+							throw new ExplicitException("An issue with ID " + oldNumber + " already exists.");
+						if (dryRun || importOption.isUseExistingIssueIDs())
 							newNumber = oldNumber;
 						else
 							newNumber = OneDev.getInstance(IssueManager.class).getNextNumber(oneDevProject);
