@@ -372,6 +372,11 @@ public class ImportUtils {
 						issue.setProject(oneDevProject);
 						issue.setNumberScope(oneDevProject.getForkRoot());
 
+						LastUpdate lastUpdate = new LastUpdate();
+						lastUpdate.setActivity("opened");
+						lastUpdate.setDate(issue.getSubmitDate());
+						lastUpdate.setUser(issue.getSubmitter());
+
 						// initialize all custom fields
 						for (FieldSpec fieldSpec : issueSetting.getFieldSpecs())
 							issue.setFieldValue(fieldSpec.getName(), null);
@@ -426,12 +431,6 @@ public class ImportUtils {
 						issue.setSubmitDate(ISODateTimeFormat.dateTimeNoMillis()
 								.parseDateTime(issueNode.get("created_on").asText())
 								.toDate());
-
-						LastUpdate lastUpdate = new LastUpdate();
-						lastUpdate.setActivity("Opened");
-						lastUpdate.setDate(issue.getSubmitDate());
-						lastUpdate.setUser(issue.getSubmitter());
-						issue.setLastUpdate(lastUpdate);
 
 						// tracker --> custom field "Type"
 						JsonNode trackerNode = issueNode.get("tracker");
@@ -573,6 +572,10 @@ public class ImportUtils {
 
 								issue.getComments().add(comment);
 								issue.setCommentCount(issue.getComments().size());
+
+								lastUpdate.setActivity("commented");
+								lastUpdate.setDate(comment.getDate());
+								lastUpdate.setUser(comment.getUser());
 							}
 
 							JsonNode detailsNode = journalNode.get("details");
@@ -677,6 +680,10 @@ public class ImportUtils {
 										issueChange.setData(data);
 
 										issue.getChanges().add(issueChange);
+
+										lastUpdate.setActivity(issueChange.getData().getActivity());
+										lastUpdate.setDate(issueChange.getDate());
+										lastUpdate.setUser(issueChange.getUser());
 									}
 								}
 
@@ -688,6 +695,10 @@ public class ImportUtils {
 									issueChange.setData(new IssueFieldChangeData(oldFields, newFields));
 
 									issue.getChanges().add(issueChange);
+
+									lastUpdate.setActivity(issueChange.getData().getActivity());
+									lastUpdate.setDate(issueChange.getDate());
+									lastUpdate.setUser(issueChange.getUser());
 								}
 							}
 						}
@@ -707,6 +718,8 @@ public class ImportUtils {
 							else
 								issue.setDescription(builder.toString());
 						}
+
+						issue.setLastUpdate(lastUpdate);
 
 						issues.add(issue);
 					}
