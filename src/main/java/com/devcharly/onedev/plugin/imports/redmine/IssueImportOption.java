@@ -25,6 +25,8 @@ public class IssueImportOption implements Serializable {
 
 	private boolean importVersions;
 
+	private String importIssueIDs;
+
 	private String assigneesIssueField = "Assignees";
 	private String categoryIssueField = "Category";
 
@@ -51,6 +53,15 @@ public class IssueImportOption implements Serializable {
 
 	public void setImportVersions(boolean importVersions) {
 		this.importVersions = importVersions;
+	}
+
+	@Editable(order=250, name="Import Issue IDs", description="Redmine issue IDs to import (all if empty; multiple IDs separated by <code>,</code>; ID range separated by <code>-</code>; maximum 300 issues).")
+	public String getImportIssueIDs() {
+		return importIssueIDs;
+	}
+
+	public void setImportIssueIDs(String importIssueIDs) {
+		this.importIssueIDs = importIssueIDs;
 	}
 
 	private static GlobalIssueSetting getIssueSetting() {

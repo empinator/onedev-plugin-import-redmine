@@ -742,9 +742,46 @@ public class ImportUtils {
 
 			};
 
+
+			String importIssueIDs = importOption.getImportIssueIDs();
+			if (importIssueIDs != null) {
+				int count = 0;
+				StringBuilder ids = new StringBuilder();
+				for (String id: importIssueIDs.split(",")) {
+					id = id.trim();
+					if (id.indexOf('-') > 0) {
+						String[] split = id.split("-");
+						if (split.length != 2)
+							throw new ExplicitException("Invalid issue ID range '" + id + "'");
+
+						try {
+							int from = Integer.parseInt(split[0].trim());
+							int to = Integer.parseInt(split[1].trim());
+							for (int i = from; i <= to; i++) {
+								if (ids.length() > 0)
+									ids.append(',');
+								ids.append(i);
+								count++;
+							}
+						} catch (NumberFormatException ex) {
+							throw new ExplicitException("Invalid issue ID range '" + id + "'");
+						}
+					} else {
+						if (ids.length() > 0)
+							ids.append(',');
+						ids.append(id);
+						count++;
+					}
+				}
+				if (count > 300)
+					throw new ExplicitException("Too many issue IDs (max 300).");
+
+				importIssueIDs = ids.toString();
+			}
 			logger.log("Importing issues from project " + redmineProject + "...");
 
-			String apiEndpoint = server.getApiEndpoint("/issues.json?project_id=" + redmineProjectId + "&status_id=*&sort=id");
+			String apiEndpoint = server.getApiEndpoint("/issues.json?project_id=" + redmineProjectId + "&status_id=*&sort=id"
+					+ (importIssueIDs != null ? "&issue_id=" + importIssueIDs : ""));
 			list(client, apiEndpoint, "issues", pageDataConsumer, logger);
 
 			if (!dryRun) {
