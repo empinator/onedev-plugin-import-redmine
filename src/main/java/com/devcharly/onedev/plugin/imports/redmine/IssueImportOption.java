@@ -23,6 +23,7 @@ public class IssueImportOption implements Serializable {
 
 	private boolean importIssues = true;
 	private boolean importVersions;
+	private boolean convertTextileToMarkdown;
 	private boolean useExistingIssueIDs = true;
 
 	private String importIssueIDs;
@@ -53,6 +54,15 @@ public class IssueImportOption implements Serializable {
 
 	public void setImportVersions(boolean importVersions) {
 		this.importVersions = importVersions;
+	}
+
+	@Editable(order=210)
+	public boolean isConvertTextileToMarkdown() {
+		return convertTextileToMarkdown;
+	}
+
+	public void setConvertTextileToMarkdown(boolean convertTextileToMarkdown) {
+		this.convertTextileToMarkdown = convertTextileToMarkdown;
 	}
 
 	@Editable(order=220, name="Use existing issue IDs",

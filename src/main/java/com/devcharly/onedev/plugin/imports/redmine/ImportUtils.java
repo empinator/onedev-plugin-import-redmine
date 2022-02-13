@@ -360,6 +360,20 @@ public class ImportUtils {
 					return StringUtils.join(escapedValues, "<br>");
 				}
 
+				private String convertText(String str) {
+					if (str == null || str.isEmpty())
+						return str;
+
+					// normalize line separator to NL
+					str = str.replace("\r\n", "\n").replace("\r", "\n");
+
+					// convert textile to markdown
+					if (importOption.isConvertTextileToMarkdown())
+						str = RedmineTextileConverter.convertTextileToMarkdown(str);
+
+					return str;
+				}
+
 				@Override
 				public void consume(List<JsonNode> pageData) throws InterruptedException {
 					for (JsonNode issueNode: pageData) {
@@ -385,7 +399,7 @@ public class ImportUtils {
 						issue.setTitle(issueNode.get("subject").asText());
 
 						// description --> description
-						issue.setDescription(issueNode.get("description").asText(null));
+						issue.setDescription(convertText(issueNode.get("description").asText(null)));
 
 						// issue id --> number
 						Long oldNumber = issueNode.get("id").asLong();
@@ -565,7 +579,7 @@ public class ImportUtils {
 
 							IssueComment comment = null;
 							JsonNode notesNode = journalNode.get("notes");
-							String notes = (notesNode != null) ? notesNode.asText() : "";
+							String notes = convertText((notesNode != null) ? notesNode.asText() : "");
 							if (!notes.isEmpty()) {
 								comment = new IssueComment();
 								comment.setIssue(issue);
