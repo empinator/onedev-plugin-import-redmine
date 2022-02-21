@@ -30,6 +30,10 @@ public class IssueImportOption implements Serializable {
 
 	private String assigneesIssueField = "Assignees";
 	private String categoryIssueField = "Category";
+	private String startDateField;
+	private String dueDateField;
+	private String doneRatioField;
+	private String estimatedHoursField;
 
 	private List<IssueStatusMapping> issueStatusMappings = new ArrayList<>();
 	private List<IssueTrackerMapping> issueTrackerMappings = new ArrayList<>();
@@ -112,7 +116,7 @@ public class IssueImportOption implements Serializable {
 	}
 
 	@Editable(order=360, description="Specify a custom field to hold category information.<br>"
-			+ "<b>NOTE: </b> The custom field is created if it does not exist")
+			+ "<b>NOTE: </b> If the custom field does <b>not exist</b>, it is <b>created</b> with possible values imported from Redmine")
 	@NotEmpty
 	public String getCategoryIssueField() {
 		return categoryIssueField;
@@ -130,6 +134,74 @@ public class IssueImportOption implements Serializable {
 
 	public void setIssueStatusMappings(List<IssueStatusMapping> issueStatusMappings) {
 		this.issueStatusMappings = issueStatusMappings;
+	}
+
+	@Editable(order=370, description="Optionally specify a date field to hold start date information."
+			+ " If not specified, the field will be reflected in issue description<br>"
+			+ "<b>NOTE: </b> You may customize OneDev issue fields in case there is no appropriate option here")
+	@ChoiceProvider("getDateIssueFieldChoices")
+	public String getStartDateField() {
+		return startDateField;
+	}
+
+	public void setStartDateField(String startDateField) {
+		this.startDateField = startDateField;
+	}
+
+	@Editable(order=371, description="Optionally specify a date field to hold due date information."
+			+ " If not specified, the field will be reflected in issue description<br>"
+			+ "<b>NOTE: </b> You may customize OneDev issue fields in case there is no appropriate option here")
+	@ChoiceProvider("getDateIssueFieldChoices")
+	public String getDueDateField() {
+		return dueDateField;
+	}
+
+	public void setDueDateField(String dueDateField) {
+		this.dueDateField = dueDateField;
+	}
+
+	@SuppressWarnings("unused")
+	private static List<String> getDateIssueFieldChoices() {
+		List<String> choices = new ArrayList<>();
+		for (FieldSpec field: getIssueSetting().getFieldSpecs()) {
+			if (field.getType().equals(InputSpec.DATE))
+				choices.add(field.getName());
+		}
+		return choices;
+	}
+
+	@Editable(order=372, description="Optionally specify a integer field to hold done ratio (percentage) information."
+			+ " If not specified, the field will be reflected in issue description<br>"
+			+ "<b>NOTE: </b> You may customize OneDev issue fields in case there is no appropriate option here")
+	@ChoiceProvider("getIntegerIssueFieldChoices")
+	public String getDoneRatioField() {
+		return doneRatioField;
+	}
+
+	public void setDoneRatioField(String doneRatioField) {
+		this.doneRatioField = doneRatioField;
+	}
+
+	@Editable(order=373, description="Optionally specify a integer field to hold estimated hours information."
+			+ " If not specified, the field will be reflected in issue description<br>"
+			+ "<b>NOTE: </b> You may customize OneDev issue fields in case there is no appropriate option here")
+	@ChoiceProvider("getIntegerIssueFieldChoices")
+	public String getEstimatedHoursField() {
+		return estimatedHoursField;
+	}
+
+	public void setEstimatedHoursField(String estimatedHoursField) {
+		this.estimatedHoursField = estimatedHoursField;
+	}
+
+	@SuppressWarnings("unused")
+	private static List<String> getIntegerIssueFieldChoices() {
+		List<String> choices = new ArrayList<>();
+		for (FieldSpec field: getIssueSetting().getFieldSpecs()) {
+			if (field.getType().equals(InputSpec.INTEGER))
+				choices.add(field.getName());
+		}
+		return choices;
 	}
 
 	@Editable(order=700, description="Specify how to map Redmine issue trackers to OneDev custom fields.<br>"
@@ -152,7 +224,8 @@ public class IssueImportOption implements Serializable {
 		this.issuePriorityMappings = issuePriorityMappings;
 	}
 
-	@Editable(order=380, description="Specify how to map Redmine custom issue fields to OneDev. Unmapped fields will "
+	@Editable(order=380, name="Custom Issue Field Mappings",
+			description="Specify how to map Redmine custom issue fields to OneDev. Unmapped fields will "
 			+ "be reflected in issue description.<br>"
 			+ "<b>Note: </b> You may customize OneDev issue fields in case there is no appropriate option here")
 	public List<IssueFieldMapping> getIssueFieldMappings() {

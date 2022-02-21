@@ -491,6 +491,46 @@ public class ImportUtils {
 						String categoryValue = (categoryNode != null) ? categoryNode.get("name").asText() : null;
 						issue.setFieldValue(importOption.getCategoryIssueField(), categoryValue);
 
+						// start_date --> custom field
+						JsonNode startDateNode = issueNode.get("start_date");
+						if (startDateNode != null) {
+							String startDate = startDateNode.asText(null);
+							if (importOption.getStartDateField() != null)
+								issue.setFieldValue(importOption.getStartDateField(), startDate);
+							else
+								extraIssueInfo.put("Start date", HtmlEscape.escapeHtml5(startDate));
+						}
+
+						// due_date --> custom field
+						JsonNode dueDateNode = issueNode.get("due_date");
+						if (dueDateNode != null) {
+							String dueDate = dueDateNode.asText(null);
+							if (importOption.getDueDateField() != null)
+								issue.setFieldValue(importOption.getDueDateField(), dueDate);
+							else
+								extraIssueInfo.put("Due date", HtmlEscape.escapeHtml5(dueDate));
+						}
+
+						// done_ratio --> custom field
+						JsonNode doneRatioNode = issueNode.get("done_ratio");
+						if (doneRatioNode != null) {
+							int doneRatio = doneRatioNode.asInt(-1);
+							if (importOption.getDoneRatioField() != null)
+								issue.setFieldValue(importOption.getDoneRatioField(), doneRatio);
+							else
+								extraIssueInfo.put("% Done", HtmlEscape.escapeHtml5(doneRatio + "%"));
+						}
+
+						// estimated_hours --> custom field
+						JsonNode estimatedHoursNode = issueNode.get("estimated_hours");
+						if (estimatedHoursNode != null) {
+							int estimatedHours = estimatedHoursNode.asInt(-1);
+							if (importOption.getEstimatedHoursField() != null)
+								issue.setFieldValue(importOption.getEstimatedHoursField(), estimatedHours);
+							else
+								extraIssueInfo.put("Estimated time", HtmlEscape.escapeHtml5(estimatedHoursNode.asText(null)));
+						}
+
 						// custom_fields
 						JsonNode customFieldsNode = issueNode.get("custom_fields");
 						if (customFieldsNode != null) {
@@ -664,6 +704,30 @@ public class ImportUtils {
 											} else if (oldVersion != null) {
 												data = new IssueMilestoneRemoveData(oldVersion);
 											}
+										} else if ("start_date".equals(name)) {
+											String fieldName = importOption.getStartDateField();
+											if (fieldName == null)
+												fieldName = "Start date";
+											addToFields(fieldName, oldValue, oldFields);
+											addToFields(fieldName, newValue, newFields);
+										} else if ("due_date".equals(name)) {
+											String fieldName = importOption.getDueDateField();
+											if (fieldName == null)
+												fieldName = "Due date";
+											addToFields(fieldName, oldValue, oldFields);
+											addToFields(fieldName, newValue, newFields);
+										} else if ("done_ratio".equals(name)) {
+											String fieldName = importOption.getDoneRatioField();
+											if (fieldName == null)
+												fieldName = "Done Ratio";
+											addToFields(fieldName, oldValue, oldFields);
+											addToFields(fieldName, newValue, newFields);
+										} else if ("estimated_hours".equals(name)) {
+											String fieldName = importOption.getEstimatedHoursField();
+											if (fieldName == null)
+												fieldName = "Estimated Hours";
+											addToFields(fieldName, oldValue, oldFields);
+											addToFields(fieldName, newValue, newFields);
 										} else {
 											resultNotes.add(String.format(
 												"Unknown history property name '%s' in Redmine issue <a href=\"%s\">#%d</a> (<a href=\"%s\">JSON</a>)",
@@ -822,8 +886,8 @@ public class ImportUtils {
 							change.setComment(migrator.migratePrefixed(comment, "#"));
 						dao.persist(change);
 					}
-					for (IssueWatch change: issue.getWatches())
-						dao.persist(change);
+					for (IssueWatch watch: issue.getWatches())
+						dao.persist(watch);
 				}
 			}
 
