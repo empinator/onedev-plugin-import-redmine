@@ -653,6 +653,7 @@ public class ImportUtils {
 								comment.setUser(user);
 								comment.setDate(createdOn);
 
+								issue.getComments().add(comment);
 								issue.setCommentCount(issue.getCommentCount() + 1);
 
 								lastUpdate.setActivity("commented");
@@ -785,11 +786,6 @@ public class ImportUtils {
 										issueChange.setUser(user);
 										issueChange.setData(data);
 
-										if (comment != null && data instanceof IssueStateChangeData) {
-											issueChange.setComment(comment.getContent());
-											comment = null;
-										}
-
 										issue.getChanges().add(issueChange);
 
 										lastUpdate.setActivity(issueChange.getData().getActivity());
@@ -805,11 +801,6 @@ public class ImportUtils {
 									issueChange.setUser(user);
 									issueChange.setData(new IssueFieldChangeData(oldFields, newFields));
 
-									if (comment != null) {
-										issueChange.setComment(comment.getContent());
-										comment = null;
-									}
-
 									issue.getChanges().add(issueChange);
 
 									lastUpdate.setActivity(issueChange.getData().getActivity());
@@ -817,9 +808,6 @@ public class ImportUtils {
 									lastUpdate.setUser(issueChange.getUser());
 								}
 							}
-
-							if (comment != null)
-								issue.getComments().add(comment);
 						}
 
 						if (!extraIssueInfo.isEmpty()) {
@@ -906,12 +894,8 @@ public class ImportUtils {
 						comment.setContent(migrator.migratePrefixed(comment.getContent(),  "#"));
 						dao.persist(comment);
 					}
-					for (IssueChange change: issue.getChanges()) {
-						String comment = change.getComment();
-						if (comment != null)
-							change.setComment(migrator.migratePrefixed(comment, "#"));
+					for (IssueChange change: issue.getChanges())
 						dao.persist(change);
-					}
 					for (IssueWatch watch: issue.getWatches())
 						dao.persist(watch);
 				}
