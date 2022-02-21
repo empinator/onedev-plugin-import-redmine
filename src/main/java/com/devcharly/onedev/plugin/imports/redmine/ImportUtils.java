@@ -374,6 +374,29 @@ public class ImportUtils {
 					return str;
 				}
 
+				private String findSimilarMilestone(String milestone, Map<String, Milestone> milestoneMappings) {
+					if (milestoneMappings.containsKey(milestone))
+						return milestone;
+
+					// try without trailing ".0"
+					String m = milestone;
+					while (m.endsWith(".0")) {
+						m = StringUtils.removeEnd(m, ".0");
+						if (milestoneMappings.containsKey(m))
+							return m;
+					}
+
+					// try with appended ".0"
+					m = milestone;
+					for (int i = 0; i < 3; i++) {
+						m += ".0";
+						if (milestoneMappings.containsKey(m))
+							return m;
+					}
+
+					return milestone;
+				}
+
 				@Override
 				public void consume(List<JsonNode> pageData) throws InterruptedException {
 					for (JsonNode issueNode: pageData) {
@@ -556,6 +579,9 @@ public class ImportUtils {
 
 								FieldSpec mapped = fieldMappings.get(fieldName);
 								if (mapped != null) {
+									if (mapped.getType().equals(InputSpec.MILESTONE) && value instanceof String)
+										value = findSimilarMilestone((String) value, milestoneMappings);
+
 									issue.setFieldValue(fieldName, value);
 								} else {
 									@SuppressWarnings("unchecked")
