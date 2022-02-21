@@ -43,6 +43,10 @@ pre-formatted                pre-formatted
 pre-formatted                pre-formatted
 </code></pre>                ~~~
 
+> <pre>                      > ~~~
+quoted pre-formatted         > quoted pre-formatted
+</pre>                       > ~~~
+
 commit:123456789abcdef       123456789abcdef
 [[wiki-link]]                wiki-link
 !image_url!                  ![image_url](image_url)
@@ -78,7 +82,8 @@ class RedmineTextileConverter {
 		UNDERLINE_REPLACE      = "++$1++",
 		STRIKE_THROUGH_REPLACE = "~~$1~~",
 
-		PRE_MATCH              = "(?s)\\h*<pre>\\h*\\n?(.*?)\\n?\\h*</pre>\\h*\\n?",
+		QUOTED_PRE_MATCH       = "(?ms)^(>\\h*<pre>)(.*?)(</pre>)",
+		PRE_MATCH              = "(?s)(\\h*|>\\s*)<pre>\\h*\\n?(.*?)\\n?(\\h*|>\\s*)</pre>\\h*\\n?",
 		PRE_CODE_MATCH         = "(?s)^\\s*<code\\s+class=\"(.*?)\">\\h*\\n?(.*?)\\n?\\h*<\\/code>\\s*$",
 		PRE_CODE_REPLACE       = "$1\n$2",
 
@@ -98,14 +103,29 @@ class RedmineTextileConverter {
 		if (str == null || str.isEmpty())
 			return str;
 
+		// quoted pre-formatted text
+		str = replace(str, QUOTED_PRE_MATCH, matcher -> {
+			String content = matcher.group(2);
+			if (!content.startsWith("\n"))
+				content = '\n' + content;
+			content = content.replaceAll("\\n(?!>)", "\n> ");
+			if (!content.endsWith("\n> "))
+				content += "\n> ";
+			return matcher.group(1) + content + matcher.group(3);
+		});
+
 		// pre-formatted text
 		// replace all text between <pre> and </pre> with temporary tags
 		// to exclude it from further processing
-		HashMap<String, String> tempPreTags = new HashMap<>();
+		HashMap<String, String[]> tempPreTags = new HashMap<>();
 		AtomicInteger preId = new AtomicInteger();
 		str = replace(str, PRE_MATCH, matcher -> {
 			String tempTag = "<temptag-pre-" + preId.incrementAndGet() + ">";
-			tempPreTags.put(tempTag, matcher.group(1));
+			tempPreTags.put(tempTag, new String[] {
+					matcher.group(1),
+					matcher.group(2),
+					matcher.group(3),
+			});
 			return tempTag;
 		});
 
@@ -163,15 +183,16 @@ class RedmineTextileConverter {
 			str = str.replace(e.getKey(), e.getValue());
 
 		// replace temporary tags with markdown code blocks
-		for (Entry<String, String> e : tempPreTags.entrySet()) {
-			String value = e.getValue();
+		for (Entry<String, String[]> e : tempPreTags.entrySet()) {
+			String[] values = e.getValue();
+			String value = values[1];
 			String value2 = value.replaceAll(PRE_CODE_MATCH, PRE_CODE_REPLACE);
 
-			String replacement = "~~~";
+			String replacement = values[0].startsWith(">") ? "> ~~~" : "~~~";
 			if (value2.equals(value))
 				replacement += '\n';
 			replacement += value2;
-			replacement += "\n~~~\n";
+			replacement += values[2].startsWith(">") ? "\n> ~~~\n" : "\n~~~\n";
 
 			str = str.replace(e.getKey(), replacement);
 		}
