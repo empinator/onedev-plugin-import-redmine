@@ -35,6 +35,7 @@ import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.server.OneDev;
 import io.onedev.server.entitymanager.IssueManager;
+import io.onedev.server.entitymanager.LinkSpecManager;
 import io.onedev.server.entitymanager.MilestoneManager;
 import io.onedev.server.entitymanager.SettingManager;
 import io.onedev.server.entitymanager.UserManager;
@@ -43,8 +44,10 @@ import io.onedev.server.model.Issue;
 import io.onedev.server.model.IssueChange;
 import io.onedev.server.model.IssueComment;
 import io.onedev.server.model.IssueField;
+import io.onedev.server.model.IssueLink;
 import io.onedev.server.model.IssueSchedule;
 import io.onedev.server.model.IssueWatch;
+import io.onedev.server.model.LinkSpec;
 import io.onedev.server.model.Milestone;
 import io.onedev.server.model.Project;
 import io.onedev.server.model.User;
@@ -53,8 +56,12 @@ import io.onedev.server.model.support.administration.GlobalIssueSetting;
 import io.onedev.server.model.support.inputspec.InputSpec;
 import io.onedev.server.model.support.inputspec.choiceinput.choiceprovider.Choice;
 import io.onedev.server.model.support.inputspec.choiceinput.choiceprovider.SpecifiedChoices;
+import io.onedev.server.model.support.issue.LinkSpecOpposite;
 import io.onedev.server.model.support.issue.changedata.IssueChangeData;
 import io.onedev.server.model.support.issue.changedata.IssueFieldChangeData;
+import io.onedev.server.model.support.issue.changedata.IssueLinkAddData;
+import io.onedev.server.model.support.issue.changedata.IssueLinkChangeData;
+import io.onedev.server.model.support.issue.changedata.IssueLinkRemoveData;
 import io.onedev.server.model.support.issue.changedata.IssueMilestoneAddData;
 import io.onedev.server.model.support.issue.changedata.IssueMilestoneChangeData;
 import io.onedev.server.model.support.issue.changedata.IssueMilestoneRemoveData;
@@ -291,6 +298,8 @@ public class ImportUtils {
 			List<Issue> issues = new ArrayList<>();
 
 			Map<Long, Long> issueNumberMappings = new HashMap<>();
+			Map<Long, Issue> issuesMap = new HashMap<>();
+			Map<String, JsonNode> redmineRelations = new HashMap<>();
 
 			AtomicInteger numOfImportedIssues = new AtomicInteger(0);
 			PageDataConsumer pageDataConsumer = new PageDataConsumer() {
@@ -595,8 +604,17 @@ public class ImportUtils {
 						}
 
 						// get additional issue information
-						String apiEndpoint = server.getApiEndpoint("/issues/" + oldNumber + ".json?include=watchers,attachments,journals");
+						String apiEndpoint = server.getApiEndpoint("/issues/" + oldNumber + ".json?include=relations,watchers,attachments,journals");
 						JsonNode issueNode2 = JerseyUtils.get(client, apiEndpoint, logger).get("issue");
+
+						// relations --> links
+						JsonNode relationsNode = issueNode2.get("relations");
+						if (relationsNode != null) {
+							// since Redmine returns relation information in both issues,
+							// put it into a map using relation ID as key to eliminate duplicates
+							for (JsonNode relationNode: relationsNode)
+								redmineRelations.put(relationNode.get("id").asText(), relationNode);
+						}
 
 						// watchers --> watches
 						JsonNode watchersNode = issueNode2.get("watchers");
@@ -760,6 +778,21 @@ public class ImportUtils {
 												"Unknown history property name '%s' in Redmine issue <a href=\"%s\">#%d</a> (<a href=\"%s\">JSON</a>)",
 												HtmlEscape.escapeHtml5(name), server.getApiEndpoint("/issues/" + oldNumber), oldNumber, apiEndpoint));
 										}
+									} else if ("relation".equals(property)) {
+										String linkName;
+										switch (detailNode.get("name").asText()) {
+											case "relates":     linkName = "Related To"; break;
+											case "duplicates":  linkName = "Duplicating"; break;
+											case "duplicated":  linkName = "Duplicated By"; break;
+											case "blocks":      linkName = "Blocking"; break;
+											case "blocked":     linkName = "Blocked By"; break;
+											case "precedes":    linkName = "Precedes"; break;
+											case "follows":     linkName = "Follows"; break;
+											case "copied_to":   linkName = "Copied To"; break;
+											case "copied_from": linkName = "Copied From"; break;
+											default:            linkName = "Unknown"; break;
+										}
+										data = new TempIssueLinkChangeData(linkName, oldValue, newValue);
 									} else if ("cf".equals(property)) {
 										// custom fields
 										String fieldName = fieldId2nameMap.get(name);
@@ -829,6 +862,7 @@ public class ImportUtils {
 						issue.setLastUpdate(lastUpdate);
 
 						issues.add(issue);
+						issuesMap.put(oldNumber, issue);
 					}
 
 					logger.log("Imported " + numOfImportedIssues.addAndGet(pageData.size()) + " issues");
@@ -878,6 +912,82 @@ public class ImportUtils {
 					+ (importIssueIDs != null ? "&issue_id=" + importIssueIDs : ""));
 			list(client, apiEndpoint, "issues", pageDataConsumer, logger);
 
+			// replace temporary link change data
+			for (Issue issue : issues) {
+				for (IssueChange change : issue.getChanges()) {
+					if (change.getData() instanceof TempIssueLinkChangeData) {
+						TempIssueLinkChangeData data = (TempIssueLinkChangeData) change.getData();
+						String oldIssueSummary = null;
+						if (data.oldValue != null) {
+							Long oldNumber = new Long(data.oldValue);
+							Issue oldIssue = issuesMap.get(oldNumber);
+							oldIssueSummary = "#" + issueNumberMappings.getOrDefault(oldNumber, oldNumber)
+								+ (oldIssue != null ? " - " + oldIssue.getTitle() : "");
+						}
+						String newIssueSummary = null;
+						if (data.newValue != null) {
+							Long newNumber = new Long(data.newValue);
+							Issue newIssue = issuesMap.get(newNumber);
+							newIssueSummary = "#" + issueNumberMappings.getOrDefault(newNumber, newNumber)
+								+ (newIssue != null ? " - " + newIssue.getTitle() : "");
+						}
+						if (oldIssueSummary != null && newIssueSummary != null)
+							change.setData(new IssueLinkChangeData(data.linkName, oldIssueSummary, newIssueSummary));
+						else if (newIssueSummary != null)
+							change.setData(new IssueLinkAddData(data.linkName, newIssueSummary));
+						else if (oldIssueSummary != null)
+							change.setData(new IssueLinkRemoveData(data.linkName, oldIssueSummary));
+					}
+				}
+			}
+
+			// create OneDev links from Redmine relations
+			List<LinkSpec> linkSpecs = new ArrayList<>();
+			List<IssueLink> issueLinks = new ArrayList<>();
+			Map<String, LinkSpec> relationTypeMapping = new HashMap<>();
+			LinkSpecManager linkSpecManager = OneDev.getInstance(LinkSpecManager.class);
+			for (JsonNode relationNode : redmineRelations.values()) {
+				long issue_id = relationNode.get("issue_id").asLong();
+				long issue_to_id = relationNode.get("issue_to_id").asLong();
+				String relation_type = relationNode.get("relation_type").asText();
+
+				Issue source = issuesMap.get(issue_to_id);
+				Issue target = issuesMap.get(issue_id);
+
+				if (source == null) {
+					resultNotes.add(String.format(
+							"Relation to unknown issue #%d in Redmine issue <a href=\"%s\">#%d</a>",
+							issue_to_id, server.getApiEndpoint("/issues/" + issue_id), issue_id));
+					continue;
+				}
+				if (target == null) {
+					resultNotes.add(String.format(
+							"Relation to unknown issue #%d in Redmine issue <a href=\"%s\">#%d</a>",
+							issue_id, server.getApiEndpoint("/issues/" + issue_to_id), issue_to_id));
+					continue;
+				}
+
+				// create OneDev link specs (if necessary)
+				LinkSpec linkSpec = relationTypeMapping.computeIfAbsent(relation_type, k -> {
+					LinkSpec spec;
+					switch (relation_type) {
+						default:
+						case "relates":    spec = getOrCreateLinkSpec(linkSpecManager, "Related To", true, null, false, 10, linkSpecs); break;
+						case "duplicates": spec = getOrCreateLinkSpec(linkSpecManager, "Duplicated By", true, "Duplicating", true, 11, linkSpecs); break;
+						case "blocks":     spec = getOrCreateLinkSpec(linkSpecManager, "Blocked By", true, "Blocking", true, 12, linkSpecs); break;
+						case "precedes":   spec = getOrCreateLinkSpec(linkSpecManager, "Follows", true, "Precedes", true, 13, linkSpecs); break;
+						case "copied_to":  spec = getOrCreateLinkSpec(linkSpecManager, "Copied From", true, "Copied To", true, 14, linkSpecs); break;
+					}
+					return spec;
+				});
+
+				IssueLink link = new IssueLink();
+				link.setSource(source);
+				link.setTarget(target);
+				link.setSpec(linkSpec);
+				issueLinks.add(link);
+			}
+
 			if (!dryRun) {
 				ReferenceMigrator migrator = new ReferenceMigrator(Issue.class, issueNumberMappings);
 				Dao dao = OneDev.getInstance(Dao.class);
@@ -899,6 +1009,12 @@ public class ImportUtils {
 					for (IssueWatch watch: issue.getWatches())
 						dao.persist(watch);
 				}
+
+				for (LinkSpec linkSpec: linkSpecs)
+					linkSpecManager.save(linkSpec, null, null);
+
+				for (IssueLink issueLink: issueLinks)
+					dao.persist(issueLink);
 			}
 
 			ImportResult result = new ImportResult();
@@ -919,6 +1035,27 @@ public class ImportUtils {
 	private static void addToFields(String fieldName, String value, Map<String, Input> fields) {
 		if (value != null && !value.isEmpty())
 			fields.put(fieldName, new Input(fieldName, InputSpec.ENUMERATION, Collections.singletonList(value)));
+	}
+
+	private static LinkSpec getOrCreateLinkSpec(LinkSpecManager linkSpecManager, String name, boolean multiple,
+			String oppositeName, boolean oppositeMultiple, int order, List<LinkSpec> linkSpecs) {
+
+		LinkSpec spec = linkSpecManager.find(name);
+		if (spec != null)
+			return spec;
+
+		spec = new LinkSpec();
+		spec.setName(name);
+		spec.setMultiple(multiple);
+		if (oppositeName != null) {
+			spec.setOpposite(new LinkSpecOpposite());
+			spec.getOpposite().setName(oppositeName);
+			spec.getOpposite().setMultiple(oppositeMultiple);
+		}
+		spec.setOrder(order);
+
+		linkSpecs.add(spec);
+		return spec;
 	}
 
 	static void importVersions(ImportServer server, String redmineProject, Project oneDevProject,
@@ -1066,5 +1203,21 @@ public class ImportUtils {
 	static String getRedmineProjectId(String redmineProject) {
 		int sep = redmineProject.lastIndexOf(':');
 		return redmineProject.substring(sep + 1);
+	}
+
+	private static class TempIssueLinkChangeData extends IssueLinkChangeData {
+
+		private static final long serialVersionUID = 1L;
+
+		final String linkName;
+		final String oldValue;
+		final String newValue;
+
+		public TempIssueLinkChangeData(String linkName, String oldValue, String newValue) {
+			super(linkName, oldValue, newValue);
+			this.linkName = linkName;
+			this.oldValue = oldValue;
+			this.newValue = newValue;
+		}
 	}
 }
