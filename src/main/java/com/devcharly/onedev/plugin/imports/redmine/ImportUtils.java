@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -299,6 +300,7 @@ public class ImportUtils {
 
 			Map<Long, Long> issueNumberMappings = new HashMap<>();
 			Map<Long, Issue> issuesMap = new HashMap<>();
+			Map<Long, Long> redmineParents = new HashMap<>();
 			Map<String, JsonNode> redmineRelations = new HashMap<>();
 
 			AtomicInteger numOfImportedIssues = new AtomicInteger(0);
@@ -439,6 +441,11 @@ public class ImportUtils {
 							newNumber = OneDev.getInstance(IssueManager.class).getNextNumber(oneDevProject);
 						issue.setNumber(newNumber);
 						issueNumberMappings.put(oldNumber, newNumber);
+
+						// parent
+						JsonNode parentNode = issueNode.get("parent");
+						if (parentNode != null)
+							redmineParents.put(oldNumber, parentNode.get("id").asLong());
 
 						// status --> state
 						String status = issueNode.get("status").get("name").asText();
@@ -986,6 +993,37 @@ public class ImportUtils {
 				link.setTarget(target);
 				link.setSpec(linkSpec);
 				issueLinks.add(link);
+			}
+
+			// create OneDev links from Redmine subtasks
+			if (!redmineParents.isEmpty()) {
+				LinkSpec linkSpec = getOrCreateLinkSpec(linkSpecManager, "Child Issue", true, "Parent Issue", false, 15, linkSpecs);
+				for (Entry<Long, Long> entry : redmineParents.entrySet()) {
+					Long childNumber = entry.getKey();
+					Long parentNumber = entry.getValue();
+
+					Issue source = issuesMap.get(parentNumber);
+					Issue target = issuesMap.get(childNumber);
+
+					if (source == null) {
+						resultNotes.add(String.format(
+								"Unknown parent issue #%d in Redmine issue <a href=\"%s\">#%d</a>",
+								parentNumber, server.getApiEndpoint("/issues/" + childNumber), childNumber));
+						continue;
+					}
+					if (target == null) {
+						resultNotes.add(String.format(
+								"Unknown child issue #%d in Redmine issue <a href=\"%s\">#%d</a>",
+								childNumber, server.getApiEndpoint("/issues/" + parentNumber), parentNumber));
+						continue;
+					}
+
+					IssueLink link = new IssueLink();
+					link.setSource(source);
+					link.setTarget(target);
+					link.setSpec(linkSpec);
+					issueLinks.add(link);
+				}
 			}
 
 			if (!dryRun) {
