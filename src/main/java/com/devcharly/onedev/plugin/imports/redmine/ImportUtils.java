@@ -418,11 +418,6 @@ public class ImportUtils {
 						issue.setProject(oneDevProject);
 						issue.setNumberScope(oneDevProject.getForkRoot());
 
-						LastUpdate lastUpdate = new LastUpdate();
-						lastUpdate.setActivity("opened");
-						lastUpdate.setDate(issue.getSubmitDate());
-						lastUpdate.setUser(issue.getSubmitter());
-
 						// initialize all custom fields
 						for (FieldSpec fieldSpec : issueSetting.getFieldSpecs())
 							issue.setFieldValue(fieldSpec.getName(), null);
@@ -479,6 +474,11 @@ public class ImportUtils {
 						issue.setSubmitDate(ISODateTimeFormat.dateTimeNoMillis()
 								.parseDateTime(issueNode.get("created_on").asText())
 								.toDate());
+
+						LastUpdate lastUpdate = new LastUpdate();
+						lastUpdate.setActivity("opened");
+						lastUpdate.setDate(issue.getSubmitDate());
+						lastUpdate.setUser(issue.getSubmitter());
 
 						// tracker --> custom field "Type"
 						JsonNode trackerNode = issueNode.get("tracker");
