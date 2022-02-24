@@ -23,9 +23,13 @@ h4. heading                  #### heading
 
 * unordered list             - unordered list
 ** unordered list              - unordered list
+> * unordered list           > - unordered list
+> ** unordered list          >   - unordered list
 
 # ordered list               1. ordered list
 ## ordered list                 1. ordered list
+> # ordered list             > 1. ordered list
+> ## ordered list            >    1. ordered list
 
 *bold*                       **bold**
 **bold**                     **bold**            (no change)
@@ -68,8 +72,8 @@ class RedmineTextileConverter {
 		H3_REPLACE = "### ",
 		H4_REPLACE = "#### ",
 
-		UNORDERED_LIST_MATCH   = "(?m)^(\\h*)(\\*{1,10})(?=\\h+[^\\h\\n])",
-		ORDERED_LIST_MATCH     = "(?m)^(\\h*)(#{1,10})(?=\\h+[^\\h\\n])",
+		UNORDERED_LIST_MATCH   = "(?m)^(\\h*(?:|>\\h+))(\\*{1,10})(?=\\h+[^\\h\\n])",
+		ORDERED_LIST_MATCH     = "(?m)^(\\h*(?:|>\\h+))(#{1,10})(?=\\h+[^\\h\\n])",
 
 		ITALIC_MATCH           = "(?m)(?<=^|\\h|\\|)__(?!\\h|_)(.+?)(?<!\\h)__(?=$|\\W|\\|)",
 		BOLD_MATCH             = "(?m)(?<=^|\\h|\\|)\\*(?!\\h|\\*)(.+?)(?<!\\h)\\*(?=$|\\W|\\|)",
