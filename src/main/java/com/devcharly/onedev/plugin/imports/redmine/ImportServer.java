@@ -9,6 +9,10 @@ import javax.ws.rs.client.Invocation;
 import javax.ws.rs.client.WebTarget;
 import javax.ws.rs.core.Response;
 
+import io.onedev.server.annotation.ClassValidating;
+import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.Password;
+import io.onedev.server.validation.Validatable;
 import org.apache.wicket.MetaDataKey;
 import org.glassfish.jersey.client.ClientProperties;
 import org.glassfish.jersey.client.authentication.HttpAuthenticationFeature;
@@ -16,10 +20,6 @@ import org.hibernate.validator.constraints.NotEmpty;
 
 import io.onedev.commons.utils.StringUtils;
 import io.onedev.server.util.JerseyUtils;
-import io.onedev.server.util.validation.Validatable;
-import io.onedev.server.util.validation.annotation.ClassValidating;
-import io.onedev.server.web.editable.annotation.Editable;
-import io.onedev.server.web.editable.annotation.Password;
 
 @Editable
 @ClassValidating
@@ -37,9 +37,9 @@ public class ImportServer implements Serializable, Validatable {
 
 	static final String PROP_ACCESS_TOKEN = "accessToken";
 
-	private String apiUrl = "https://";
+	private String apiUrl = "";
 
-	private String accessToken;
+	private String accessToken = "";
 
 	@Editable(order=10, name="Redmine API URL", description="Specify Redmine API url, for instance <tt>https://api.redmine.com</tt>")
 	@NotEmpty

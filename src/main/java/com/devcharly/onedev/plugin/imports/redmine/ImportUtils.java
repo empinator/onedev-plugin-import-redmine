@@ -1,86 +1,55 @@
 package com.devcharly.onedev.plugin.imports.redmine;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
+import com.fasterxml.jackson.databind.JsonNode;
+import io.onedev.commons.utils.ExplicitException;
+import io.onedev.commons.utils.TaskLogger;
+import io.onedev.server.OneDev;
+import io.onedev.server.attachment.AttachmentManager;
+import io.onedev.server.buildspecmodel.inputspec.InputSpec;
+import io.onedev.server.buildspecmodel.inputspec.choiceinput.choiceprovider.Choice;
+import io.onedev.server.buildspecmodel.inputspec.choiceinput.choiceprovider.SpecifiedChoices;
+import io.onedev.server.entitymanager.*;
+import io.onedev.server.entityreference.ReferenceMigrator;
+import io.onedev.server.model.*;
+import io.onedev.server.model.support.LastActivity;
+import io.onedev.server.model.support.administration.GlobalIssueSetting;
+import io.onedev.server.model.support.issue.LinkSpecOpposite;
+import io.onedev.server.model.support.issue.changedata.*;
+import io.onedev.server.model.support.issue.field.spec.FieldSpec;
+import io.onedev.server.model.support.issue.field.spec.choicefield.ChoiceField;
+import io.onedev.server.persistence.dao.Dao;
+import io.onedev.server.util.Input;
+import io.onedev.server.util.JerseyUtils;
+import io.onedev.server.util.JerseyUtils.PageDataConsumer;
+import io.onedev.server.util.Pair;
+import org.apache.commons.lang.StringUtils;
+import org.apache.http.client.utils.URIBuilder;
+import org.joda.time.format.ISODateTimeFormat;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.unbescape.html.HtmlEscape;
 
 import javax.annotation.Nullable;
 import javax.ws.rs.client.Client;
 import javax.ws.rs.client.Invocation;
 import javax.ws.rs.client.WebTarget;
 import javax.ws.rs.core.Response;
-
-import org.apache.commons.lang.StringUtils;
-import org.apache.http.client.utils.URIBuilder;
-import org.joda.time.format.ISODateTimeFormat;
-import org.unbescape.html.HtmlEscape;
-
-import com.fasterxml.jackson.databind.JsonNode;
-
-import io.onedev.commons.utils.ExplicitException;
-import io.onedev.commons.utils.TaskLogger;
-import io.onedev.server.OneDev;
-import io.onedev.server.entitymanager.IssueManager;
-import io.onedev.server.entitymanager.LinkSpecManager;
-import io.onedev.server.entitymanager.MilestoneManager;
-import io.onedev.server.entitymanager.SettingManager;
-import io.onedev.server.entitymanager.UserManager;
-import io.onedev.server.entityreference.ReferenceMigrator;
-import io.onedev.server.model.Issue;
-import io.onedev.server.model.IssueChange;
-import io.onedev.server.model.IssueComment;
-import io.onedev.server.model.IssueField;
-import io.onedev.server.model.IssueLink;
-import io.onedev.server.model.IssueSchedule;
-import io.onedev.server.model.IssueWatch;
-import io.onedev.server.model.LinkSpec;
-import io.onedev.server.model.Milestone;
-import io.onedev.server.model.Project;
-import io.onedev.server.model.User;
-import io.onedev.server.model.support.LastUpdate;
-import io.onedev.server.model.support.administration.GlobalIssueSetting;
-import io.onedev.server.model.support.inputspec.InputSpec;
-import io.onedev.server.model.support.inputspec.choiceinput.choiceprovider.Choice;
-import io.onedev.server.model.support.inputspec.choiceinput.choiceprovider.SpecifiedChoices;
-import io.onedev.server.model.support.issue.LinkSpecOpposite;
-import io.onedev.server.model.support.issue.changedata.IssueChangeData;
-import io.onedev.server.model.support.issue.changedata.IssueFieldChangeData;
-import io.onedev.server.model.support.issue.changedata.IssueLinkAddData;
-import io.onedev.server.model.support.issue.changedata.IssueLinkChangeData;
-import io.onedev.server.model.support.issue.changedata.IssueLinkRemoveData;
-import io.onedev.server.model.support.issue.changedata.IssueMilestoneAddData;
-import io.onedev.server.model.support.issue.changedata.IssueMilestoneChangeData;
-import io.onedev.server.model.support.issue.changedata.IssueMilestoneRemoveData;
-import io.onedev.server.model.support.issue.changedata.IssueStateChangeData;
-import io.onedev.server.model.support.issue.changedata.IssueTitleChangeData;
-import io.onedev.server.model.support.issue.field.spec.ChoiceField;
-import io.onedev.server.model.support.issue.field.spec.FieldSpec;
-import io.onedev.server.persistence.dao.Dao;
-import io.onedev.server.util.Input;
-import io.onedev.server.util.JerseyUtils;
-import io.onedev.server.util.JerseyUtils.PageDataConsumer;
-import io.onedev.server.util.Pair;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.*;
+import java.util.Map.Entry;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class ImportUtils {
 
 	static final String NAME = "Redmine";
 
 	static final int PER_PAGE = 50;
+
+	private static final Logger sl4jLogger = LoggerFactory.getLogger(ImportUtils.class);
+
 
 	private static final Map<String, String> statusDefaultFields = new HashMap<>();
 	private static final Map<String, String> trackerDefaultFields = new HashMap<>();
@@ -105,7 +74,16 @@ public class ImportUtils {
 		priorityDefaultFields.put("Immediate", "Priority::Critical");
 	}
 
-	static IssueImportOption buildImportOption(ImportServer server, Collection<String> redmineProjects, TaskLogger logger) {
+	static IssueImportOption buildImportOption(ImportServer server) {
+		TaskLogger logger = new TaskLogger() {
+
+			@Override
+			public void log(String message, String sessionId) {
+				sl4jLogger.info(message);
+			}
+
+		};
+
 		IssueImportOption importOption = new IssueImportOption();
 		Client client = server.newClient();
 		try {
@@ -188,9 +166,13 @@ public class ImportUtils {
 			String apiEndpoint = importSource.getApiEndpoint("/users/" + login + ".json");
 			try {
 				String email = JerseyUtils.get(client, apiEndpoint, logger).get("user").get("mail").asText(null);
-				if (email != null)
-					userOpt = Optional.ofNullable(OneDev.getInstance(UserManager.class).findByEmail(email));
-				else
+				if (email != null) {
+					UserManager um = OneDev.getInstance(UserManager.class);
+					userOpt = Optional.ofNullable(um.findByVerifiedEmailAddress(email));
+//					User nu = new User();
+//					nu.set
+//					um.create(nu);
+				} else
 					userOpt = Optional.empty();
 			} catch (ExplicitException|NullPointerException ex) {
 				// Redmine returns status 404 for unknown users
@@ -314,8 +296,9 @@ public class ImportUtils {
 
 					String attachmentsLinks = "";
 
-					long maxUploadFileSize = OneDev.getInstance(SettingManager.class)
-							.getPerformanceSetting().getMaxUploadFileSize()*1L*1024*1024;
+					long maxUploadFileSize = (long) OneDev.getInstance(SettingManager.class).getPerformanceSetting().getMaxUploadFileSize() * 1024 * 1024;
+					AttachmentManager am = OneDev.getInstance(AttachmentManager.class);
+
 					for (JsonNode attachmentNode: attachmentNodes) {
 						String attachmentName = attachmentNode.get("filename").asText(null);
 						String attachmentUrl = attachmentNode.get("content_url").asText(null);
@@ -335,18 +318,19 @@ public class ImportUtils {
 												endpoint, errorMessage));
 									}
 									try (InputStream is = response.readEntity(InputStream.class)) {
-										String oneDevAttachmentName = oneDevProject.saveAttachment(issueUUID, attachmentName, is);
+										String oneDevAttachmentName = am.saveAttachment(oneDevProject.getId(), issueUUID, attachmentName, is);
 										String oneDevAttachmentUrl = oneDevProject.getAttachmentUrlPath(issueUUID, oneDevAttachmentName);
 										if (markdown.contains("(" + attachmentName + ")")) {
 											markdown = markdown.replace("(" + attachmentName + ")", "(" + oneDevAttachmentUrl + ")");
 										}
 
-										String description = attachmentNode.get("description").asText();
+										String description = attachmentNode.get("description") != null ? attachmentNode.get("description").asText() : "";
 										attachmentsLinks += "[" + attachmentName + "](" + oneDevAttachmentUrl + ")"
 												+ (!description.isEmpty() ? " - " + description : "")
 												+ " (" + attachmentNode.get("author").get("name").asText()
 												+ ", " + attachmentNode.get("created_on").asText() + ")\n";
 									} catch (IOException e) {
+										logger.error(attachmentNode.toPrettyString() , e);
 										throw new RuntimeException(e);
 									}
 								}
@@ -482,8 +466,8 @@ public class ImportUtils {
 								.parseDateTime(issueNode.get("created_on").asText())
 								.toDate());
 
-						LastUpdate lastUpdate = new LastUpdate();
-						lastUpdate.setActivity("opened");
+						LastActivity lastUpdate = new LastActivity();
+						lastUpdate.setDescription("opened");
 						lastUpdate.setDate(issue.getSubmitDate());
 						lastUpdate.setUser(issue.getSubmitter());
 
@@ -493,7 +477,7 @@ public class ImportUtils {
 							String trackerName = trackerNode.get("name").asText();
 							Pair<FieldSpec, String> mapped = trackerMappings.get(trackerName);
 							if (mapped != null) {
-								issue.setFieldValue(mapped.getFirst().getName(), mapped.getSecond());
+								issue.setFieldValue(mapped.getLeft().getName(), mapped.getRight());
 							} else {
 								extraIssueInfo.put("Type", HtmlEscape.escapeHtml5(trackerName));
 								unmappedIssueTypes.add(HtmlEscape.escapeHtml5(trackerName));
@@ -506,7 +490,7 @@ public class ImportUtils {
 							String priorityName = priorityNode.get("name").asText();
 							Pair<FieldSpec, String> mapped = priorityMappings.get(priorityName);
 							if (mapped != null) {
-								issue.setFieldValue(mapped.getFirst().getName(), mapped.getSecond());
+								issue.setFieldValue(mapped.getLeft().getName(), mapped.getRight());
 							} else {
 								extraIssueInfo.put("Priority", HtmlEscape.escapeHtml5(priorityName));
 								unmappedIssuePriorities.add(priorityName);
@@ -681,7 +665,7 @@ public class ImportUtils {
 								issue.getComments().add(comment);
 								issue.setCommentCount(issue.getCommentCount() + 1);
 
-								lastUpdate.setActivity("commented");
+								lastUpdate.setDescription("commented");
 								lastUpdate.setDate(comment.getDate());
 								lastUpdate.setUser(comment.getUser());
 							}
@@ -828,7 +812,7 @@ public class ImportUtils {
 
 										issue.getChanges().add(issueChange);
 
-										lastUpdate.setActivity(issueChange.getData().getActivity());
+										lastUpdate.setDescription(issueChange.getData().getActivity());
 										lastUpdate.setDate(issueChange.getDate());
 										lastUpdate.setUser(issueChange.getUser());
 									}
@@ -843,7 +827,7 @@ public class ImportUtils {
 
 									issue.getChanges().add(issueChange);
 
-									lastUpdate.setActivity(issueChange.getData().getActivity());
+									lastUpdate.setDescription(issueChange.getData().getActivity());
 									lastUpdate.setDate(issueChange.getDate());
 									lastUpdate.setUser(issueChange.getUser());
 								}
@@ -866,7 +850,7 @@ public class ImportUtils {
 								issue.setDescription(builder.toString());
 						}
 
-						issue.setLastUpdate(lastUpdate);
+						issue.setLastActivity(lastUpdate);
 
 						issues.add(issue);
 						issuesMap.put(oldNumber, issue);
@@ -938,12 +922,8 @@ public class ImportUtils {
 							newIssueSummary = "#" + issueNumberMappings.getOrDefault(newNumber, newNumber)
 								+ (newIssue != null ? " - " + newIssue.getTitle() : "");
 						}
-						if (oldIssueSummary != null && newIssueSummary != null)
-							change.setData(new IssueLinkChangeData(data.linkName, oldIssueSummary, newIssueSummary));
-						else if (newIssueSummary != null)
-							change.setData(new IssueLinkAddData(data.linkName, newIssueSummary));
-						else if (oldIssueSummary != null)
-							change.setData(new IssueLinkRemoveData(data.linkName, oldIssueSummary));
+
+						change.setData(new IssueTitleChangeData(oldIssueSummary, newIssueSummary));
 					}
 				}
 			}
@@ -1033,7 +1013,7 @@ public class ImportUtils {
 					if (issue.getDescription() != null)
 						issue.setDescription(migrator.migratePrefixed(issue.getDescription(), "#"));
 
-					OneDev.getInstance(IssueManager.class).save(issue);
+					dao.persist(issue);
 					for (IssueSchedule schedule: issue.getSchedules())
 						dao.persist(schedule);
 					for (IssueField field: issue.getFields())
@@ -1049,7 +1029,7 @@ public class ImportUtils {
 				}
 
 				for (LinkSpec linkSpec: linkSpecs)
-					linkSpecManager.save(linkSpec, null, null);
+					linkSpecManager.create(linkSpec);
 
 				for (IssueLink issueLink: issueLinks)
 					dao.persist(issueLink);
@@ -1065,7 +1045,13 @@ public class ImportUtils {
 			result.notes.addAll(resultNotes);
 
 			return result;
-		} finally {
+		}
+		catch (Exception e) {
+			e.printStackTrace();
+			logger.error(e.getMessage(), e);
+			throw e;
+		}
+		finally {
 			client.close();
 		}
 	}
@@ -1135,7 +1121,7 @@ public class ImportUtils {
 				oneDevProject.getMilestones().add(milestone);
 
 				if (!dryRun)
-					OneDev.getInstance(MilestoneManager.class).save(milestone);
+					OneDev.getInstance(MilestoneManager.class).createOrUpdate(milestone);
 			}
 		} finally {
 			client.close();
@@ -1243,7 +1229,7 @@ public class ImportUtils {
 		return redmineProject.substring(sep + 1);
 	}
 
-	private static class TempIssueLinkChangeData extends IssueLinkChangeData {
+	private static class TempIssueLinkChangeData extends IssueTitleChangeData {
 
 		private static final long serialVersionUID = 1L;
 
@@ -1252,7 +1238,7 @@ public class ImportUtils {
 		final String newValue;
 
 		public TempIssueLinkChangeData(String linkName, String oldValue, String newValue) {
-			super(linkName, oldValue, newValue);
+			super(oldValue, newValue);
 			this.linkName = linkName;
 			this.oldValue = oldValue;
 			this.newValue = newValue;

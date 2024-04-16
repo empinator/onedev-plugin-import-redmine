@@ -9,6 +9,8 @@ import java.util.List;
 
 import javax.ws.rs.client.Client;
 
+import io.onedev.server.annotation.ChoiceProvider;
+import io.onedev.server.annotation.Editable;
 import org.hibernate.validator.constraints.NotEmpty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,8 +18,6 @@ import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import io.onedev.commons.utils.TaskLogger;
-import io.onedev.server.web.editable.annotation.ChoiceProvider;
-import io.onedev.server.web.editable.annotation.Editable;
 import io.onedev.server.web.util.WicketUtils;
 
 @Editable

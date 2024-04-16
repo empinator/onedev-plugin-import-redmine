@@ -22,7 +22,7 @@ public class RedminePluginModule extends AbstractPluginModule {
 		contribute(IssueImporterContribution.class, new IssueImporterContribution() {
 
 			@Override
-			public Collection<IssueImporter<? extends Serializable, ? extends Serializable, ? extends Serializable>> getImporters() {
+			public Collection<IssueImporter> getImporters() {
 				return Lists.newArrayList(new RedmineIssueImporter());
 			}
 
