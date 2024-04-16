@@ -1,6 +1,8 @@
 package com.devcharly.onedev.plugin.imports.redmine;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Sets;
 import io.onedev.commons.utils.ExplicitException;
 import io.onedev.commons.utils.TaskLogger;
 import io.onedev.server.OneDev;
@@ -23,7 +25,6 @@ import io.onedev.server.util.JerseyUtils;
 import io.onedev.server.util.JerseyUtils.PageDataConsumer;
 import io.onedev.server.util.Pair;
 import org.apache.commons.lang.StringUtils;
-import org.apache.http.client.utils.URIBuilder;
 import org.joda.time.format.ISODateTimeFormat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,8 +37,6 @@ import javax.ws.rs.client.WebTarget;
 import javax.ws.rs.core.Response;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -74,6 +73,10 @@ public class ImportUtils {
 		priorityDefaultFields.put("Immediate", "Priority::Critical");
 	}
 
+	private Group defaultGroup;
+
+	private Set<String> usersCreated = new HashSet<>();
+
 	static IssueImportOption buildImportOption(ImportServer server) {
 		TaskLogger logger = new TaskLogger() {
 
@@ -86,25 +89,28 @@ public class ImportUtils {
 
 		IssueImportOption importOption = new IssueImportOption();
 		Client client = server.newClient();
+
+		RedmineClient rc = new RedmineClient(client, logger);
+
 		try {
 			Set<String> statuses = new LinkedHashSet<>();
 			String statusesApiEndpoint = server.getApiEndpoint("/issue_statuses.json");
-			for (JsonNode trackerNode: list(client, statusesApiEndpoint, "issue_statuses", logger))
+			for (JsonNode trackerNode: rc.list(statusesApiEndpoint, "issue_statuses"))
 				statuses.add(trackerNode.get("name").asText());
 
 			Set<String> trackers = new LinkedHashSet<>();
 			String trackersApiEndpoint = server.getApiEndpoint("/trackers.json");
-			for (JsonNode trackerNode: list(client, trackersApiEndpoint, "trackers", logger))
+			for (JsonNode trackerNode: rc.list(trackersApiEndpoint, "trackers"))
 				trackers.add(trackerNode.get("name").asText());
 
 			Set<String> priorities = new LinkedHashSet<>();
 			String prioritiesApiEndpoint = server.getApiEndpoint("/enumerations/issue_priorities.json");
-			for (JsonNode priorityNode: list(client, prioritiesApiEndpoint, "issue_priorities", logger))
+			for (JsonNode priorityNode: rc.list(prioritiesApiEndpoint, "issue_priorities"))
 				priorities.add(priorityNode.get("name").asText());
 
 			Set<String> customFields = new LinkedHashSet<>();
 			String customFieldsApiEndpoint = server.getApiEndpoint("/custom_fields.json");
-			for (JsonNode priorityNode: list(client, customFieldsApiEndpoint, "custom_fields", logger)) {
+			for (JsonNode priorityNode: rc.list(customFieldsApiEndpoint, "custom_fields")) {
 				if ("issue".equals(priorityNode.get("customized_type").asText()))
 					customFields.add(priorityNode.get("name").asText());
 			}
@@ -158,37 +164,107 @@ public class ImportUtils {
 		return importOption;
 	}
 
+	private Map<String, Optional<User>> users = new HashMap<>();
+
+	private ImportServer server;
+	private String redmineProject;
+	private Project oneDevProject;
+	private IssueImportOption importOption;
+	private boolean dryRun;
+	private TaskLogger logger;
+
+	public ImportUtils(ImportServer server, String redmineProject, Project oneDevProject,
+					   IssueImportOption importOption, boolean dryRun, TaskLogger logger) {
+		this.server = server;
+		this.redmineProject = redmineProject;
+		this.oneDevProject = oneDevProject;
+		this.importOption = importOption;
+		this.dryRun = dryRun;
+		this.logger = logger;
+
+		String assignUsersToGroup = this.importOption.getAssignUsersToGroup();
+		if(assignUsersToGroup != null) {
+			defaultGroup = OneDev.getInstance(GroupManager.class).find(assignUsersToGroup);
+		}
+
+	}
+
 	@Nullable
-	static User getUser(Client client, ImportServer importSource,
-			Map<String, Optional<User>> users, String login, TaskLogger logger) {
-		Optional<User> userOpt = users.get(login);
+	User getUser(Client client, String redmineUserId) {
+		Optional<User> userOpt = users.get(redmineUserId);
 		if (userOpt == null) {
-			String apiEndpoint = importSource.getApiEndpoint("/users/" + login + ".json");
+			String apiEndpoint = server.getApiEndpoint("/users/" + redmineUserId + ".json");
 			try {
-				String email = JerseyUtils.get(client, apiEndpoint, logger).get("user").get("mail").asText(null);
+				JsonNode redmineUser = JerseyUtils.get(client, apiEndpoint, logger).get("user");
+				String email = redmineUser.get("mail").asText(null);
+				String login = redmineUser.get("login").asText(null);
+				String lastname = redmineUser.get("lastname").asText(null);
+				String firstname = redmineUser.get("firstname").asText(null);
+
 				if (email != null) {
 					UserManager um = OneDev.getInstance(UserManager.class);
 					userOpt = Optional.ofNullable(um.findByVerifiedEmailAddress(email));
-//					User nu = new User();
-//					nu.set
-//					um.create(nu);
-				} else
+
+					if(!userOpt.isPresent() && this.importOption.isCreateUser()) {
+						EmailAddressManager em = OneDev.getInstance(EmailAddressManager.class);
+
+						User nu = new User();
+						nu.setFullName(String.format("%s %s", firstname, lastname));
+						nu.setName(login);
+						if(this.importOption.isCreateAsExternal()) {
+							nu.setPassword(User.EXTERNAL_MANAGED);
+						}
+						nu.setGuest(this.importOption.isCreateAsGuestUser());
+
+						EmailAddress ae = new EmailAddress();
+						ae.setValue(email);
+						ae.setGit(true);
+						ae.setPrimary(true);
+						ae.setOwner(nu);
+						ae.setVerificationCode(null);
+
+						if (!dryRun) {
+							um.create(nu);
+							em.create(ae);
+						}
+						nu.getEmailAddresses().add(ae);
+						this.usersCreated.add(login);
+						userOpt = Optional.of(nu);
+					}
+
+					if(userOpt.isPresent() && defaultGroup != null) {
+						MembershipManager mm = OneDev.getInstance(MembershipManager.class);
+						User user = userOpt.get();
+						long existingMembership = user.getMemberships().stream().filter(membership -> membership.getGroup().getId().equals(defaultGroup.getId())).count();
+						if (existingMembership == 0) {
+							Membership membership = new Membership();
+							membership.setUser(user);
+							membership.setGroup(defaultGroup);
+							if(!dryRun) {
+								mm.create(membership);
+							}
+						}
+					}
+				} else {
 					userOpt = Optional.empty();
+				}
 			} catch (ExplicitException|NullPointerException ex) {
 				// Redmine returns status 404 for unknown users
 				userOpt = Optional.empty();
 			}
-			users.put(login, userOpt);
+			users.put(redmineUserId, userOpt);
 		}
 		return userOpt.orElse(null);
 	}
 
-	static ImportResult importIssues(ImportServer server, String redmineProject, Project oneDevProject,
-			IssueImportOption importOption, Map<String, Optional<User>> users,
-			boolean dryRun, TaskLogger logger) {
+	ImportResult importIssues() {
 		Client client = server.newClient();
+
 		try {
 			String redmineProjectId = getRedmineProjectId(redmineProject);
+
+			RedmineClient rc = new RedmineClient(client, this.logger);
+
 			Set<String> nonExistentMilestones = new HashSet<>();
 			Set<String> nonExistentLogins = new HashSet<>();
 			Set<String> unmappedIssueTypes = new HashSet<>();
@@ -247,31 +323,31 @@ public class ImportUtils {
 				milestoneMappings.put(milestone.getName(), milestone);
 
 			String usersApiEndpoint = server.getApiEndpoint("/users.json");
-			for (JsonNode userNode: list(client, usersApiEndpoint, "users", logger))
+			for (JsonNode userNode: rc.list(usersApiEndpoint, "users"))
 				userId2nameMap.put(userNode.get("id").asText(), userNode.get("firstname").asText() + " " + userNode.get("lastname").asText());
 
 			String versionsApiEndpoint = server.getApiEndpoint("/projects/" + redmineProjectId + "/versions.json");
-			for (JsonNode versionNode: list(client, versionsApiEndpoint, "versions", logger))
+			for (JsonNode versionNode: rc.list(versionsApiEndpoint, "versions"))
 				versionId2nameMap.put(versionNode.get("id").asText(), versionNode.get("name").asText());
 
 			String statusesApiEndpoint = server.getApiEndpoint("/issue_statuses.json");
-			for (JsonNode statusNode: list(client, statusesApiEndpoint, "issue_statuses", logger))
+			for (JsonNode statusNode: rc.list(statusesApiEndpoint, "issue_statuses"))
 				statusId2nameMap.put(statusNode.get("id").asText(), statusNode.get("name").asText());
 
 			String trackersApiEndpoint = server.getApiEndpoint("/trackers.json");
-			for (JsonNode trackerNode: list(client, trackersApiEndpoint, "trackers", logger))
+			for (JsonNode trackerNode: rc.list(trackersApiEndpoint, "trackers"))
 				trackerId2nameMap.put(trackerNode.get("id").asText(), trackerNode.get("name").asText());
 
 			String prioritiesApiEndpoint = server.getApiEndpoint("/enumerations/issue_priorities.json");
-			for (JsonNode priorityNode: list(client, prioritiesApiEndpoint, "issue_priorities", logger))
+			for (JsonNode priorityNode: rc.list(prioritiesApiEndpoint, "issue_priorities"))
 				priorityId2nameMap.put(priorityNode.get("id").asText(), priorityNode.get("name").asText());
 
 			String categoriesEndpoint = server.getApiEndpoint("/projects/" + redmineProjectId + "/issue_categories.json");
-			for (JsonNode categoryNode: list(client, categoriesEndpoint, "issue_categories", logger))
+			for (JsonNode categoryNode: rc.list(categoriesEndpoint, "issue_categories"))
 				categoryId2nameMap.put(categoryNode.get("id").asText(), categoryNode.get("name").asText());
 
 			String customFieldsApiEndpoint = server.getApiEndpoint("/custom_fields.json");
-			for (JsonNode customFieldNode: list(client, customFieldsApiEndpoint, "custom_fields", logger))
+			for (JsonNode customFieldNode: rc.list(customFieldsApiEndpoint, "custom_fields"))
 				fieldId2nameMap.put(customFieldNode.get("id").asText(), customFieldNode.get("name").asText());
 
 			importIssueCategories(server, redmineProject, importOption, dryRun, logger);
@@ -452,13 +528,13 @@ public class ImportUtils {
 						}
 
 						// author --> submitter
-						String login = issueNode.get("author").get("id").asText(null);
-						User user = getUser(client, server, users, login, logger);
+						String redmineUserId = issueNode.get("author").get("id").asText(null);
+						User user = getUser(client, redmineUserId);
 						if (user != null) {
 							issue.setSubmitter(user);
 						} else {
 							issue.setSubmitter(OneDev.getInstance(UserManager.class).getUnknown());
-							nonExistentLogins.add(issueNode.get("author").get("name").asText() + ":" + login);
+							nonExistentLogins.add(issueNode.get("author").get("name").asText() + ":" + redmineUserId);
 						}
 
 						// created_on --> submit date
@@ -500,12 +576,12 @@ public class ImportUtils {
 						// assigned_to --> custom field "Assignees"
 						JsonNode assigneeNode = issueNode.get("assigned_to");
 						if (assigneeNode != null) {
-							login = assigneeNode.get("id").asText();
-							user = getUser(client, server, users, login, logger);
+							redmineUserId = assigneeNode.get("id").asText();
+							user = getUser(client, redmineUserId);
 							if (user != null) {
 								issue.setFieldValue(importOption.getAssigneesIssueField(), user.getName());
 							} else {
-								nonExistentLogins.add(assigneeNode.get("name").asText() + ":" + login);
+								nonExistentLogins.add(assigneeNode.get("name").asText() + ":" + redmineUserId);
 							}
 						}
 
@@ -611,8 +687,8 @@ public class ImportUtils {
 						JsonNode watchersNode = issueNode2.get("watchers");
 						if (watchersNode != null) {
 							for (JsonNode watcherNode: watchersNode) {
-								login = watcherNode.get("id").asText();
-								user = getUser(client, server, users, login, logger);
+								redmineUserId = watcherNode.get("id").asText();
+								user = getUser(client, redmineUserId);
 								if (user != null) {
 									IssueWatch watch = new IssueWatch();
 									watch.setIssue(issue);
@@ -621,7 +697,7 @@ public class ImportUtils {
 									issue.getWatches().add(watch);
 								} else {
 									user = OneDev.getInstance(UserManager.class).getUnknown();
-									nonExistentLogins.add(watcherNode.get("name").asText() + ":" + login);
+									nonExistentLogins.add(watcherNode.get("name").asText() + ":" + redmineUserId);
 								}
 							}
 						}
@@ -641,11 +717,11 @@ public class ImportUtils {
 						// journals ("History") --> comments, changes
 						JsonNode journalsNode = issueNode2.get("journals");
 						for (JsonNode journalNode: journalsNode) {
-							login = journalNode.get("user").get("id").asText();
-							user = getUser(client, server, users, login, logger);
+							redmineUserId = journalNode.get("user").get("id").asText();
+							user = getUser(client, redmineUserId);
 							if (user == null) {
 								user = OneDev.getInstance(UserManager.class).getUnknown();
-								nonExistentLogins.add(journalNode.get("user").get("name").asText() + ":" + login);
+								nonExistentLogins.add(journalNode.get("user").get("name").asText() + ":" + redmineUserId);
 							}
 
 							Date createdOn = ISODateTimeFormat.dateTimeNoMillis()
@@ -694,6 +770,10 @@ public class ImportUtils {
 											String oldStatus = statusId2nameMap.get(oldValue);
 											String newStatus = statusId2nameMap.get(newValue);
 											data = new IssueStateChangeData(oldStatus, newStatus, Collections.emptyMap(), Collections.emptyMap());
+										}else if ("parent_id".equals(name)) {
+											String fieldName = "Parent ID";
+											addToFields(fieldName, oldValue, oldFields);
+											addToFields(fieldName, newValue, newFields);
 										} else if ("tracker_id".equals(name)) {
 											// do not convert Redmine tracker to OneDev type for change history
 											String oldTracker = trackerId2nameMap.get(oldValue);
@@ -708,14 +788,14 @@ public class ImportUtils {
 											addToFields("Priority", newPriority, newFields);
 										} else if ("assigned_to_id".equals(name)) {
 											if (oldValue != null) {
-												User oldUser = getUser(client, server, users, oldValue, logger);
+												User oldUser = getUser(client, oldValue);
 												if (oldUser != null)
 													addToFields(importOption.getAssigneesIssueField(), oldUser.getName(), oldFields);
 												else
 													nonExistentLogins.add(userId2nameMap.getOrDefault(oldValue, "") + ":" + oldValue);
 											}
 											if (newValue != null) {
-												User newUser = getUser(client, server, users, newValue, logger);
+												User newUser = getUser(client, newValue);
 												if (newUser != null)
 													addToFields(importOption.getAssigneesIssueField(), newUser.getName(), newFields);
 												else
@@ -795,7 +875,7 @@ public class ImportUtils {
 												"Unknown history custom field '%s' in Redmine issue <a href=\"%s\">#%d</a> (<a href=\"%s\">JSON</a>)",
 												HtmlEscape.escapeHtml5(name), server.getApiEndpoint("/issues/" + oldNumber), oldNumber, apiEndpoint));
 										}
-									} else if ("attachment".equals(property)) {
+									} else if ("attachment".equals(property) || "attachment_version".equals(property)) {
 										// not migrated because OneDev does not support attachment history
 									} else {
 										resultNotes.add(String.format(
@@ -901,7 +981,7 @@ public class ImportUtils {
 
 			String apiEndpoint = server.getApiEndpoint("/issues.json?project_id=" + redmineProjectId + "&status_id=*&sort=id"
 					+ (importIssueIDs != null ? "&issue_id=" + importIssueIDs : ""));
-			list(client, apiEndpoint, "issues", pageDataConsumer, logger);
+			rc.list(apiEndpoint, "issues", pageDataConsumer);
 
 			// replace temporary link change data
 			for (Issue issue : issues) {
@@ -1043,6 +1123,7 @@ public class ImportUtils {
 			result.unmappedIssueFields.addAll(unmappedIssueFields);
 			result.tooLargeAttachments.addAll(tooLargeAttachments);
 			result.notes.addAll(resultNotes);
+			result.usersCreated.addAll(this.usersCreated);
 
 			return result;
 		}
@@ -1082,16 +1163,20 @@ public class ImportUtils {
 		return spec;
 	}
 
-	static void importVersions(ImportServer server, String redmineProject, Project oneDevProject,
-							   boolean dryRun, TaskLogger logger, boolean addWikiToMilestoneDescription) {
+	void importVersions() {
+		boolean addWikiToMilestoneDescription = this.importOption.isAddWikiToMilestoneDescription();
+
 		Client client = server.newClient();
+
 		try {
 			String redmineProjectId = getRedmineProjectId(redmineProject);
+
+			RedmineClient rc = new RedmineClient(client, this.logger);
 
 			List<Milestone> milestones = new ArrayList<>();
 			logger.log("Importing versions from project " + redmineProject + "...");
 			String apiEndpoint = server.getApiEndpoint("/projects/" + redmineProjectId + "/versions.json");
-			for (JsonNode versionNode: list(client, apiEndpoint, "versions", logger)) {
+			for (JsonNode versionNode: rc.list(apiEndpoint, "versions")) {
 				Milestone milestone = new Milestone();
 				milestone.setName(versionNode.get("name").asText());
 				JsonNode descriptionNode = versionNode.get("description");
@@ -1130,9 +1215,12 @@ public class ImportUtils {
 		}
 	}
 
-	private static void importIssueCategories(ImportServer server, String redmineProject,
+	private void importIssueCategories(ImportServer server, String redmineProject,
 			IssueImportOption importOption, boolean dryRun, TaskLogger logger) {
+
 		Client client = server.newClient();
+		RedmineClient rc = new RedmineClient(client, this.logger);
+
 		try {
 			String redmineProjectId = getRedmineProjectId(redmineProject);
 			String categoryIssueField = importOption.getCategoryIssueField();
@@ -1148,7 +1236,7 @@ public class ImportUtils {
 			List<Choice> choices = new ArrayList<>();
 			logger.log("Importing issue categories from project " + redmineProject + "...");
 			String apiEndpoint = server.getApiEndpoint("/projects/" + redmineProjectId + "/issue_categories.json");
-			for (JsonNode categoryNode: list(client, apiEndpoint, "issue_categories", logger)) {
+			for (JsonNode categoryNode: rc.list(apiEndpoint, "issue_categories")) {
 				String name = categoryNode.get("name").asText();
 
 				Choice choice = new Choice();
@@ -1176,54 +1264,6 @@ public class ImportUtils {
 
 	static GlobalIssueSetting getIssueSetting() {
 		return OneDev.getInstance(SettingManager.class).getIssueSetting();
-	}
-
-	static List<JsonNode> list(Client client, String apiEndpoint, String dataNodeName, TaskLogger logger) {
-		List<JsonNode> result = new ArrayList<>();
-		list(client, apiEndpoint, dataNodeName, new PageDataConsumer() {
-
-			@Override
-			public void consume(List<JsonNode> pageData) {
-				result.addAll(pageData);
-			}
-
-		}, logger);
-		return result;
-	}
-
-	static void list(Client client, String apiEndpoint, String dataNodeName, PageDataConsumer pageDataConsumer,
-			TaskLogger logger) {
-		URI uri;
-		try {
-			uri = new URIBuilder(apiEndpoint).build();
-		} catch (URISyntaxException e) {
-			throw new RuntimeException(e);
-		}
-
-		int offset = 0;
-		while (true) {
-			try {
-				URIBuilder builder = new URIBuilder(uri);
-				if (offset > 0)
-					builder.addParameter("offset", String.valueOf(offset));
-				builder.addParameter("limit", String.valueOf(PER_PAGE));
-				List<JsonNode> pageData = new ArrayList<>();
-				JsonNode resultNode = JerseyUtils.get(client, builder.build().toString(), logger);
-				JsonNode dataNode = resultNode.get(dataNodeName);
-				for (JsonNode each: dataNode)
-					pageData.add(each);
-				pageDataConsumer.consume(pageData);
-				JsonNode totalCountNode = resultNode.get("total_count");
-				if (totalCountNode == null)
-					break;
-				int totalCount = totalCountNode.asInt();
-				if (offset + pageData.size() >= totalCount)
-					break;
-				offset += pageData.size();
-			} catch (URISyntaxException|InterruptedException e) {
-				throw new RuntimeException(e);
-			}
-		}
 	}
 
 	static String getRedmineProjectId(String redmineProject) {

@@ -1,7 +1,5 @@
 package com.devcharly.onedev.plugin.imports.redmine;
 
-import static com.devcharly.onedev.plugin.imports.redmine.ImportUtils.list;
-
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -47,17 +45,19 @@ public class IssueImportSource implements Serializable {
 		ImportServer server = WicketUtils.getPage().getMetaData(ImportServer.META_DATA_KEY);
 
 		Client client = server.newClient();
+		TaskLogger logger = new TaskLogger() {
+
+			@Override
+			public void log(String message, String sessionId) {
+				IssueImportSource.logger.info(message);
+			}
+
+		};
+		RedmineClient rm = new RedmineClient(client, logger);
+
 		try {
 			String apiEndpoint = server.getApiEndpoint("/projects.json");
-			TaskLogger logger = new TaskLogger() {
-
-				@Override
-				public void log(String message, String sessionId) {
-					IssueImportSource.logger.info(message);
-				}
-
-			};
-			for (JsonNode projectNode: list(client, apiEndpoint, "projects", logger)) {
+			for (JsonNode projectNode: rm.list(apiEndpoint, "projects")) {
 				String projectName = projectNode.get("name").asText();
 				String projectId = projectNode.get("id").asText();
 				choices.add(projectName + ":" + projectId);

@@ -8,7 +8,10 @@ import javax.annotation.Nullable;
 
 import io.onedev.server.annotation.ChoiceProvider;
 import io.onedev.server.annotation.Editable;
+import io.onedev.server.annotation.GroupChoice;
+import io.onedev.server.annotation.ShowCondition;
 import io.onedev.server.buildspecmodel.inputspec.InputSpec;
+import io.onedev.server.util.EditContext;
 import org.hibernate.validator.constraints.NotEmpty;
 
 import io.onedev.server.OneDev;
@@ -20,6 +23,11 @@ import io.onedev.server.model.support.issue.field.spec.FieldSpec;
 public class IssueImportOption implements Serializable {
 
 	private static final long serialVersionUID = 1L;
+
+	private boolean createUser;
+	private boolean createAsGuestUser;
+	private boolean createAsExternal;
+	private String assignUsersToGroup;
 
 	private boolean importIssues = true;
 	private boolean importVersions;
@@ -41,8 +49,53 @@ public class IssueImportOption implements Serializable {
 	private List<IssuePriorityMapping> issuePriorityMappings = new ArrayList<>();
 	private List<IssueFieldMapping> issueFieldMappings = new ArrayList<>();
 
-	@Editable(order=100, name="Import Issues")
-	@Nullable
+	@Editable(order=10, name="Create Missing Users",
+			group = "users",
+			description = "If enabled, users existing Redmine will be created in OneDev"
+			+ " If disabled, content will be linked to 'unknown'")
+	public boolean isCreateUser() {
+		return createUser;
+	}
+
+	public void setCreateUser(boolean createUser) {
+		this.createUser = createUser;
+	}
+
+	private static boolean isCreateUserEnabled() {
+		return (Boolean) EditContext.get().getInputValue("createUser");
+	}
+
+	@Editable(order=11, name="Create Users as Guests")
+	@ShowCondition("isCreateUserEnabled")
+	public boolean isCreateAsGuestUser() {
+		return createAsGuestUser;
+	}
+
+	public void setCreateAsGuestUser(boolean createAsGuestUser) {
+		this.createAsGuestUser = createAsGuestUser;
+	}
+
+	@Editable(order=12, name="Create Users as managed externally, e.g. if you have an Active Directory configured")
+	@ShowCondition("isCreateUserEnabled")
+	public boolean isCreateAsExternal() {
+		return createAsExternal;
+	}
+
+	public void setCreateAsExternal(boolean createAsExternal) {
+		this.createAsExternal = createAsExternal;
+	}
+
+	@Editable(order=13, name="Automatically assign existing and newly created users to the selected group")
+	@GroupChoice
+	public String getAssignUsersToGroup() {
+		return assignUsersToGroup;
+	}
+
+	public void setAssignUsersToGroup(String assignUsersToGroup) {
+		this.assignUsersToGroup = assignUsersToGroup;
+	}
+
+	@Editable(order=100,  name="Import Issues")
 	public boolean isImportIssues() {
 		return importIssues;
 	}
@@ -52,7 +105,6 @@ public class IssueImportOption implements Serializable {
 	}
 
 	@Editable(order=200, name="Import Versions")
-	@Nullable
 	public boolean isImportVersions() {
 		return importVersions;
 	}
@@ -61,8 +113,7 @@ public class IssueImportOption implements Serializable {
 		this.importVersions = importVersions;
 	}
 
-	@Editable(order=205, name="Add Redmine Wiki to Milestone Description")
-	@Nullable
+	@Editable(order=205, name="Add Redmine Wiki to all Milestone Descriptions")
 	public boolean isAddWikiToMilestoneDescription() {
 		return addWikiToMilestoneDescription;
 	}

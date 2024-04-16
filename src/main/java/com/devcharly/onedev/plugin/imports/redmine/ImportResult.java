@@ -21,15 +21,17 @@ public class ImportResult {
 	Set<String> tooLargeAttachments = new LinkedHashSet<>();
 
 	Set<String> nonExistentMilestones = new HashSet<>();
+	Set<String> usersCreated = new HashSet<>();
+
 
 	List<String> notes = new ArrayList<>();
 
 	private String getEntryFeedback(String entryDescription, Collection<String> entries) {
 		if (entries.size() > MAX_DISPLAY_ENTRIES) {
 			List<String> entriesToDisplay = new ArrayList<>(entries).subList(0, MAX_DISPLAY_ENTRIES);
-			return "<li> " + entryDescription + ": " + HtmlEscape.escapeHtml5(entriesToDisplay.toString()) + " and more";
+			return "<li> " + entryDescription + ": " + HtmlEscape.escapeHtml5(entriesToDisplay.toString()) + " and more </li>";
 		} else {
-			return "<li> " + entryDescription + ": " + HtmlEscape.escapeHtml5(entries.toString());
+			return "<li> " + entryDescription + ": " + HtmlEscape.escapeHtml5(entries.toString()) + " </li>";
 		}
 	}
 
@@ -40,7 +42,7 @@ public class ImportResult {
 
 		if (!nonExistentMilestones.isEmpty() || !unmappedIssueTypes.isEmpty()
 				|| !unmappedIssuePriorities.isEmpty() || !unmappedIssueFields.isEmpty()
-				|| !nonExistentLogins.isEmpty() || !tooLargeAttachments.isEmpty() || !notes.isEmpty()) {
+				|| !nonExistentLogins.isEmpty() || !tooLargeAttachments.isEmpty() || !notes.isEmpty() || !usersCreated.isEmpty()) {
 			hasNotice = true;
 		}
 
@@ -71,10 +73,18 @@ public class ImportResult {
 		if (!notes.isEmpty()) {
 			int size = Math.min(notes.size(), MAX_DISPLAY_ENTRIES);
 			for (int i = 0; i < size; i++) {
-				feedback.append("<li>").append(notes.get(i));
+				feedback.append("<li>").append(notes.get(i)).append("</li>");
 			}
 			if (notes.size() > size)
-				feedback.append("<li>and ").append(notes.size() - size).append(" more");
+				feedback.append("<li>and ").append(notes.size() - size).append(" more").append("</li>");
+		}
+		if (!usersCreated.isEmpty()) {
+			int size = Math.min(usersCreated.size(), MAX_DISPLAY_ENTRIES);
+			for (String u : usersCreated) {
+				feedback.append("<li>").append(u).append("</li>");
+			}
+			if (notes.size() > size)
+				feedback.append("<li>and ").append(notes.size() - size).append(" more").append("</li>");
 		}
 
 		if (hasNotice)

@@ -2,8 +2,6 @@ package com.devcharly.onedev.plugin.imports.redmine;
 
 import static com.devcharly.onedev.plugin.imports.redmine.ImportUtils.NAME;
 import static com.devcharly.onedev.plugin.imports.redmine.ImportUtils.buildImportOption;
-import static com.devcharly.onedev.plugin.imports.redmine.ImportUtils.importIssues;
-import static com.devcharly.onedev.plugin.imports.redmine.ImportUtils.importVersions;
 
 import java.io.Serializable;
 import java.util.*;
@@ -15,7 +13,6 @@ import io.onedev.server.OneDev;
 import io.onedev.server.entitymanager.ProjectManager;
 import io.onedev.server.imports.IssueImporter;
 import io.onedev.server.model.Project;
-import io.onedev.server.model.User;
 import io.onedev.server.persistence.TransactionManager;
 import io.onedev.server.web.component.taskbutton.TaskResult;
 import io.onedev.server.web.util.ImportStep;
@@ -97,16 +94,16 @@ public class RedmineIssueImporter implements IssueImporter {
 			IssueImportSource what = sourceStep.getSetting();
 			IssueImportOption how = optionStep.getSetting();
 
+			ImportUtils iu = new ImportUtils(where, what.getProject(), project, how, dryRun, logger);
+
 			if (how.isImportVersions()) {
-				boolean addWikiToMilestoneDescription = how.isAddWikiToMilestoneDescription();
-				importVersions(where, what.getProject(), project, dryRun, logger, addWikiToMilestoneDescription);
+				iu.importVersions();
 				if (!how.isImportIssues()) {
 					return new TaskResult(true, new TaskResult.HtmlMessgae("Versions imported successfully"));
 				}
 			}
 
-			Map<String, Optional<User>> users = new HashMap<>();
-			ImportResult importResult = importIssues(where, what.getProject(), project, how, users, dryRun, logger);
+			ImportResult importResult = iu.importIssues();
 
 			return new TaskResult(true, new TaskResult.HtmlMessgae(importResult.toHtml("Issues imported successfully")));
 
