@@ -98,7 +98,8 @@ public class RedmineIssueImporter implements IssueImporter {
 			IssueImportOption how = optionStep.getSetting();
 
 			if (how.isImportVersions()) {
-				importVersions(where, what.getProject(), project, dryRun, logger);
+				boolean addWikiToMilestoneDescription = how.isAddWikiToMilestoneDescription();
+				importVersions(where, what.getProject(), project, dryRun, logger, addWikiToMilestoneDescription);
 				if (!how.isImportIssues()) {
 					return new TaskResult(true, new TaskResult.HtmlMessgae("Versions imported successfully"));
 				}

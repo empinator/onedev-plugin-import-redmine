@@ -1083,7 +1083,7 @@ public class ImportUtils {
 	}
 
 	static void importVersions(ImportServer server, String redmineProject, Project oneDevProject,
-			boolean dryRun, TaskLogger logger) {
+							   boolean dryRun, TaskLogger logger, boolean addWikiToMilestoneDescription) {
 		Client client = server.newClient();
 		try {
 			String redmineProjectId = getRedmineProjectId(redmineProject);
@@ -1104,17 +1104,19 @@ public class ImportUtils {
 				if (versionNode.get("status").asText().equals("closed"))
 					milestone.setClosed(true);
 
-				String wikiPageId = versionNode.get("name").asText().replace(' ', '_').replace(".", "");
-				apiEndpoint = server.getApiEndpoint("/projects/" + redmineProjectId + "/wiki/" + wikiPageId +".json");
-				try {
-					JsonNode wikiPageNode = JerseyUtils.get(client, apiEndpoint, logger).get("wiki_page");
-					String wikiText = wikiPageNode.get("text").asText();
-					if (wikiText != null) {
-						String description = milestone.getDescription();
-						milestone.setDescription(description != null ? description + "\n\n" + wikiText : wikiText);
+				if (addWikiToMilestoneDescription) {
+					String wikiPageId = versionNode.get("name").asText().replace(' ', '_').replace(".", "");
+					apiEndpoint = server.getApiEndpoint("/projects/" + redmineProjectId + "/wiki/" + wikiPageId + ".json");
+					try {
+						JsonNode wikiPageNode = JerseyUtils.get(client, apiEndpoint, logger).get("wiki_page");
+						String wikiText = wikiPageNode.get("text").asText();
+						if (wikiText != null) {
+							String description = milestone.getDescription();
+							milestone.setDescription(description != null ? description + "\n\n" + wikiText : wikiText);
+						}
+					} catch (ExplicitException ex) {
+						// no associated wiki page
 					}
-				} catch (ExplicitException ex) {
-					// no associated wiki page
 				}
 
 				milestones.add(milestone);

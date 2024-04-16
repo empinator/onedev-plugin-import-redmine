@@ -23,6 +23,7 @@ public class IssueImportOption implements Serializable {
 
 	private boolean importIssues = true;
 	private boolean importVersions;
+	private boolean addWikiToMilestoneDescription = false;
 	private boolean convertTextileToMarkdown;
 	private boolean useExistingIssueIDs = true;
 
@@ -58,6 +59,16 @@ public class IssueImportOption implements Serializable {
 
 	public void setImportVersions(boolean importVersions) {
 		this.importVersions = importVersions;
+	}
+
+	@Editable(order=205, name="Add Redmine Wiki to Milestone Description")
+	@Nullable
+	public boolean isAddWikiToMilestoneDescription() {
+		return addWikiToMilestoneDescription;
+	}
+
+	public void setAddWikiToMilestoneDescription(boolean addWikiToMilestoneDescription) {
+		this.addWikiToMilestoneDescription = addWikiToMilestoneDescription;
 	}
 
 	@Editable(order=210)
