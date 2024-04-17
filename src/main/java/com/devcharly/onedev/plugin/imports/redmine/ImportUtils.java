@@ -22,7 +22,6 @@ import io.onedev.server.model.support.issue.field.spec.choicefield.ChoiceField;
 import io.onedev.server.persistence.dao.Dao;
 import io.onedev.server.util.Input;
 import io.onedev.server.util.JerseyUtils;
-import io.onedev.server.util.JerseyUtils.PageDataConsumer;
 import io.onedev.server.util.Pair;
 import org.apache.commons.lang.StringUtils;
 import org.joda.time.format.ISODateTimeFormat;
@@ -167,20 +166,23 @@ public class ImportUtils {
 	private Map<String, Optional<User>> users = new HashMap<>();
 
 	private ImportServer server;
-	private String redmineProject;
+	private final IssueImportSource source;
+	private String redmineProjectId;
 	private Project oneDevProject;
 	private IssueImportOption importOption;
 	private boolean dryRun;
 	private TaskLogger logger;
 
-	public ImportUtils(ImportServer server, String redmineProject, Project oneDevProject,
+	public ImportUtils(ImportServer server, IssueImportSource what, Project oneDevProject,
 					   IssueImportOption importOption, boolean dryRun, TaskLogger logger) {
 		this.server = server;
-		this.redmineProject = redmineProject;
+		this.source = what;
 		this.oneDevProject = oneDevProject;
 		this.importOption = importOption;
 		this.dryRun = dryRun;
 		this.logger = logger;
+
+		this.redmineProjectId = this.source.getRedmineProjectId();
 
 		String assignUsersToGroup = this.importOption.getAssignUsersToGroup();
 		if(assignUsersToGroup != null) {
@@ -261,7 +263,6 @@ public class ImportUtils {
 		Client client = server.newClient();
 
 		try {
-			String redmineProjectId = getRedmineProjectId(redmineProject);
 
 			RedmineClient rc = new RedmineClient(client, this.logger);
 
@@ -274,6 +275,8 @@ public class ImportUtils {
 			Set<String> resultNotes = new LinkedHashSet<>();
 
 			Map<String, String> statusMappings = new HashMap<>();
+			Set<String> statusMappingsAsLabel = new HashSet<>();
+
 			Map<String, Pair<FieldSpec, String>> trackerMappings = new HashMap<>();
 			Map<String, Pair<FieldSpec, String>> priorityMappings = new HashMap<>();
 			Map<String, FieldSpec> fieldMappings = new HashMap<>();
@@ -290,8 +293,13 @@ public class ImportUtils {
 
 			GlobalIssueSetting issueSetting = getIssueSetting();
 
-			for (IssueStatusMapping mapping: importOption.getIssueStatusMappings())
+			for (IssueStatusMapping mapping: importOption.getIssueStatusMappings()) {
 				statusMappings.put(mapping.getRedmineIssueStatus(), mapping.getOneDevIssueState());
+				if(mapping.isAddLabel()) {
+					statusMappingsAsLabel.add(mapping.getRedmineIssueStatus());
+				}
+
+			}
 
 			for (IssueTrackerMapping mapping: importOption.getIssueTrackerMappings()) {
 				String oneDevFieldName = StringUtils.substringBefore(mapping.getOneDevIssueField(), "::");
@@ -350,7 +358,7 @@ public class ImportUtils {
 			for (JsonNode customFieldNode: rc.list(customFieldsApiEndpoint, "custom_fields"))
 				fieldId2nameMap.put(customFieldNode.get("id").asText(), customFieldNode.get("name").asText());
 
-			importIssueCategories(server, redmineProject, importOption, dryRun, logger);
+			importIssueCategories();
 
 			String initialIssueState = issueSetting.getInitialStateSpec().getName();
 
@@ -362,7 +370,17 @@ public class ImportUtils {
 			Map<String, JsonNode> redmineRelations = new HashMap<>();
 
 			AtomicInteger numOfImportedIssues = new AtomicInteger(0);
-			PageDataConsumer pageDataConsumer = new PageDataConsumer() {
+			MyPageDataConsumer pageDataConsumer = new MyPageDataConsumer() {
+
+				private int total = 0;
+				@Override
+				public void setTotal(int total) {
+					this.total = total;
+				}
+				@Override
+				public int getTotal() {
+					return total;
+				}
 
 				@Nullable
 				private String processAttachments(String issueUUID, String readableIssueId, @Nullable String markdown,
@@ -511,6 +529,10 @@ public class ImportUtils {
 						String status = issueNode.get("status").get("name").asText();
 						String state = statusMappings.getOrDefault(status, initialIssueState);
 						issue.setState(state);
+
+						if(statusMappingsAsLabel.contains(status)) {
+//							OneDev.getInstance(LabelM)
+						}
 
 						// fixed_version ("Target version") --> milestone
 						if (issueNode.hasNonNull("fixed_version")) {
@@ -770,11 +792,15 @@ public class ImportUtils {
 											String oldStatus = statusId2nameMap.get(oldValue);
 											String newStatus = statusId2nameMap.get(newValue);
 											data = new IssueStateChangeData(oldStatus, newStatus, Collections.emptyMap(), Collections.emptyMap());
-										}else if ("parent_id".equals(name)) {
+										} else if ("author_id".equals(name)) {
+											String fieldName = "Author ID";
+											addToFields(fieldName, oldValue, oldFields);
+											addToFields(fieldName, newValue, newFields);
+										} else if ("parent_id".equals(name)) {
 											String fieldName = "Parent ID";
 											addToFields(fieldName, oldValue, oldFields);
 											addToFields(fieldName, newValue, newFields);
-										} else if ("tracker_id".equals(name)) {
+										}else if ("tracker_id".equals(name)) {
 											// do not convert Redmine tracker to OneDev type for change history
 											String oldTracker = trackerId2nameMap.get(oldValue);
 											String newTracker = trackerId2nameMap.get(newValue);
@@ -936,7 +962,7 @@ public class ImportUtils {
 						issuesMap.put(oldNumber, issue);
 					}
 
-					logger.log("Imported " + numOfImportedIssues.addAndGet(pageData.size()) + " issues");
+					logger.log("Imported " + numOfImportedIssues.addAndGet(pageData.size()) + "/" + this.getTotal()  + " issues");
 				}
 
 			};
@@ -977,9 +1003,9 @@ public class ImportUtils {
 
 				importIssueIDs = ids.toString();
 			}
-			logger.log("Importing issues from project " + redmineProject + "...");
+			logger.log("Importing issues from project ID:" + redmineProjectId + "...");
 
-			String apiEndpoint = server.getApiEndpoint("/issues.json?project_id=" + redmineProjectId + "&status_id=*&sort=id"
+			String apiEndpoint = server.getApiEndpoint("/issues.json?project_id=" + redmineProjectId + "&status_id=*&sort=id&assigned_to_id="
 					+ (importIssueIDs != null ? "&issue_id=" + importIssueIDs : ""));
 			rc.list(apiEndpoint, "issues", pageDataConsumer);
 
@@ -1169,12 +1195,10 @@ public class ImportUtils {
 		Client client = server.newClient();
 
 		try {
-			String redmineProjectId = getRedmineProjectId(redmineProject);
-
 			RedmineClient rc = new RedmineClient(client, this.logger);
 
 			List<Milestone> milestones = new ArrayList<>();
-			logger.log("Importing versions from project " + redmineProject + "...");
+			logger.log("Importing versions from project ID:" + redmineProjectId + "...");
 			String apiEndpoint = server.getApiEndpoint("/projects/" + redmineProjectId + "/versions.json");
 			for (JsonNode versionNode: rc.list(apiEndpoint, "versions")) {
 				Milestone milestone = new Milestone();
@@ -1215,14 +1239,12 @@ public class ImportUtils {
 		}
 	}
 
-	private void importIssueCategories(ImportServer server, String redmineProject,
-			IssueImportOption importOption, boolean dryRun, TaskLogger logger) {
+	private void importIssueCategories() {
 
 		Client client = server.newClient();
 		RedmineClient rc = new RedmineClient(client, this.logger);
 
 		try {
-			String redmineProjectId = getRedmineProjectId(redmineProject);
 			String categoryIssueField = importOption.getCategoryIssueField();
 
 			GlobalIssueSetting issueSetting = getIssueSetting();
@@ -1234,7 +1256,7 @@ public class ImportUtils {
 			}
 
 			List<Choice> choices = new ArrayList<>();
-			logger.log("Importing issue categories from project " + redmineProject + "...");
+			logger.log("Importing issue categories from project ID:" + redmineProjectId + "...");
 			String apiEndpoint = server.getApiEndpoint("/projects/" + redmineProjectId + "/issue_categories.json");
 			for (JsonNode categoryNode: rc.list(apiEndpoint, "issue_categories")) {
 				String name = categoryNode.get("name").asText();
@@ -1264,11 +1286,6 @@ public class ImportUtils {
 
 	static GlobalIssueSetting getIssueSetting() {
 		return OneDev.getInstance(SettingManager.class).getIssueSetting();
-	}
-
-	static String getRedmineProjectId(String redmineProject) {
-		int sep = redmineProject.lastIndexOf(':');
-		return redmineProject.substring(sep + 1);
 	}
 
 	private static class TempIssueLinkChangeData extends IssueTitleChangeData {

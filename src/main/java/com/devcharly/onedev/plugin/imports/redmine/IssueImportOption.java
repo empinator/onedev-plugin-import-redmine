@@ -50,7 +50,6 @@ public class IssueImportOption implements Serializable {
 	private List<IssueFieldMapping> issueFieldMappings = new ArrayList<>();
 
 	@Editable(order=10, name="Create Missing Users",
-			group = "users",
 			description = "If enabled, users existing Redmine will be created in OneDev"
 			+ " If disabled, content will be linked to 'unknown'")
 	public boolean isCreateUser() {

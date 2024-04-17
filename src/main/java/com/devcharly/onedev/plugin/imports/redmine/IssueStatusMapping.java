@@ -21,6 +21,11 @@ public class IssueStatusMapping implements Serializable {
 
 	private String oneDevIssueState;
 
+	// map status required !
+	// optional: add label and/or set custom field
+
+	private boolean addLabel;
+
 	@Editable(order=100, name="Redmine Issue Status")
 	@NotEmpty
 	public String getRedmineIssueStatus() {
@@ -40,6 +45,15 @@ public class IssueStatusMapping implements Serializable {
 
 	public void setOneDevIssueState(String oneDevIssueState) {
 		this.oneDevIssueState = oneDevIssueState;
+	}
+
+//	@Editable(order=100, name="Add Status to Issue as Label")
+	public boolean isAddLabel() {
+		return addLabel;
+	}
+
+	public void setAddLabel(boolean addLabel) {
+		this.addLabel = addLabel;
 	}
 
 	static List<String> getOneDevIssueStateChoices() {

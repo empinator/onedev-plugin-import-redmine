@@ -23,7 +23,18 @@ public class RedmineClient {
 
     List<JsonNode> list(String apiEndpoint, String dataNodeName) {
         List<JsonNode> result = new ArrayList<>();
-        list(apiEndpoint, dataNodeName, new JerseyUtils.PageDataConsumer() {
+        list(apiEndpoint, dataNodeName, new MyPageDataConsumer() {
+
+            int total = 0;
+            @Override
+            public void setTotal(int total) {
+                this.total = total;
+            }
+
+            @Override
+            public int getTotal() {
+                return total;
+            }
 
             @Override
             public void consume(List<JsonNode> pageData) {
@@ -34,7 +45,8 @@ public class RedmineClient {
         return result;
     }
 
-    void list(String apiEndpoint, String dataNodeName, JerseyUtils.PageDataConsumer pageDataConsumer) {
+
+    void list(String apiEndpoint, String dataNodeName, MyPageDataConsumer pageDataConsumer) {
         URI uri;
         try {
             uri = new URIBuilder(apiEndpoint).build();
@@ -54,11 +66,17 @@ public class RedmineClient {
                 JsonNode dataNode = resultNode.get(dataNodeName);
                 for (JsonNode each: dataNode)
                     pageData.add(each);
-                pageDataConsumer.consume(pageData);
+                int totalCount = -1;
                 JsonNode totalCountNode = resultNode.get("total_count");
-                if (totalCountNode == null)
+                if (totalCountNode != null)
+                   totalCount = totalCountNode.asInt();
+
+                pageDataConsumer.setTotal(totalCount);
+                pageDataConsumer.consume(pageData);
+
+                if (totalCount <= 0)
                     break;
-                int totalCount = totalCountNode.asInt();
+
                 if (offset + pageData.size() >= totalCount)
                     break;
                 offset += pageData.size();

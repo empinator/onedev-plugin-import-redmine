@@ -23,6 +23,9 @@ public class IssueTrackerMapping implements Serializable {
 
 	private String oneDevIssueField;
 
+	// also add original as label
+
+
 	@Editable(order=100, name="Redmine Issue Tracker")
 	@NotEmpty
 	public String getRedmineIssueTracker() {

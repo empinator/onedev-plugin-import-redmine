@@ -94,7 +94,7 @@ public class RedmineIssueImporter implements IssueImporter {
 			IssueImportSource what = sourceStep.getSetting();
 			IssueImportOption how = optionStep.getSetting();
 
-			ImportUtils iu = new ImportUtils(where, what.getProject(), project, how, dryRun, logger);
+			ImportUtils iu = new ImportUtils(where, what, project, how, dryRun, logger);
 
 			if (how.isImportVersions()) {
 				iu.importVersions();
