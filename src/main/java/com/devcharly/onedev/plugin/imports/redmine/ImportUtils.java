@@ -211,12 +211,16 @@ public class ImportUtils {
 						EmailAddressManager em = OneDev.getInstance(EmailAddressManager.class);
 
 						User nu = new User();
-						nu.setFullName(String.format("%s %s", firstname, lastname));
-						nu.setName(login);
+						nu.setFullName(String.format("%s, %s", lastname, firstname));
+						nu.setName(email);
 						if(this.importOption.isCreateAsExternal()) {
 							nu.setPassword(User.EXTERNAL_MANAGED);
+							if(this.importOption.getSsoConnector() != null) {
+								nu.setSsoConnector(this.importOption.getSsoConnector());
+							}
 						}
 						nu.setGuest(this.importOption.isCreateAsGuestUser());
+
 
 						EmailAddress ae = new EmailAddress();
 						ae.setValue(email);
@@ -275,7 +279,7 @@ public class ImportUtils {
 			Set<String> resultNotes = new LinkedHashSet<>();
 
 			Map<String, String> statusMappings = new HashMap<>();
-			Set<String> statusMappingsAsLabel = new HashSet<>();
+			Map<String, Pair<FieldSpec, String>> statusDependingFields = new HashMap<>();
 
 			Map<String, Pair<FieldSpec, String>> trackerMappings = new HashMap<>();
 			Map<String, Pair<FieldSpec, String>> priorityMappings = new HashMap<>();
@@ -295,8 +299,18 @@ public class ImportUtils {
 
 			for (IssueStatusMapping mapping: importOption.getIssueStatusMappings()) {
 				statusMappings.put(mapping.getRedmineIssueStatus(), mapping.getOneDevIssueState());
-				if(mapping.isAddLabel()) {
-					statusMappingsAsLabel.add(mapping.getRedmineIssueStatus());
+
+				// additionally set field value
+				if(mapping.getOneDevIssueField() != null) {
+
+					String oneDevFieldName = StringUtils.substringBefore(mapping.getOneDevIssueField(), "::");
+					String oneDevFieldValue = StringUtils.substringAfter(mapping.getOneDevIssueField(), "::");
+					FieldSpec fieldSpec = issueSetting.getFieldSpec(oneDevFieldName);
+					if (fieldSpec == null)
+						throw new ExplicitException("No field spec found: " + oneDevFieldName);
+
+
+					statusDependingFields.put(mapping.getRedmineIssueStatus(), new Pair<>(fieldSpec, oneDevFieldValue));
 				}
 
 			}
@@ -460,6 +474,10 @@ public class ImportUtils {
 					if (importOption.isConvertTextileToMarkdown())
 						str = RedmineTextileConverter.convertTextileToMarkdown(str);
 
+					if(str.contains("Changeset scm|")) {
+
+					}
+
 					return str;
 				}
 
@@ -529,10 +547,6 @@ public class ImportUtils {
 						String status = issueNode.get("status").get("name").asText();
 						String state = statusMappings.getOrDefault(status, initialIssueState);
 						issue.setState(state);
-
-						if(statusMappingsAsLabel.contains(status)) {
-//							OneDev.getInstance(LabelM)
-						}
 
 						// fixed_version ("Target version") --> milestone
 						if (issueNode.hasNonNull("fixed_version")) {
@@ -690,6 +704,11 @@ public class ImportUtils {
 									unmappedIssueFields.add(fieldName);
 								}
 							}
+						}
+
+						if(statusDependingFields.containsKey(status)) {
+							Pair<FieldSpec, String> mapped = statusDependingFields.get(status);
+							issue.setFieldValue(mapped.getLeft().getName(), mapped.getRight());
 						}
 
 						// get additional issue information

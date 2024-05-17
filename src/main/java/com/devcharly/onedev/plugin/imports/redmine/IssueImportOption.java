@@ -11,6 +11,7 @@ import io.onedev.server.annotation.Editable;
 import io.onedev.server.annotation.GroupChoice;
 import io.onedev.server.annotation.ShowCondition;
 import io.onedev.server.buildspecmodel.inputspec.InputSpec;
+import io.onedev.server.model.support.administration.sso.SsoConnector;
 import io.onedev.server.util.EditContext;
 import org.hibernate.validator.constraints.NotEmpty;
 
@@ -27,6 +28,7 @@ public class IssueImportOption implements Serializable {
 	private boolean createUser;
 	private boolean createAsGuestUser;
 	private boolean createAsExternal;
+	private String ssoConnector;
 	private String assignUsersToGroup;
 
 	private boolean importIssues = true;
@@ -82,6 +84,26 @@ public class IssueImportOption implements Serializable {
 
 	public void setCreateAsExternal(boolean createAsExternal) {
 		this.createAsExternal = createAsExternal;
+	}
+
+	@Editable(order=12, name="Select external SSO Provider to set for user. Leave Blank for 'External Authentication'")
+	@ShowCondition("isCreateUserEnabled")
+	@ChoiceProvider("getAvailableSsoConnectors")
+	public String getSsoConnector() {
+		return ssoConnector;
+	}
+
+	public void setSsoConnector(String ssoConnector) {
+		this.ssoConnector = ssoConnector;
+	}
+
+	private static List<String> getAvailableSsoConnectors() {
+		List<String> choices = new ArrayList<>();
+		List<SsoConnector> ssoConnectors = OneDev.getInstance(SettingManager.class).getSsoConnectors();
+		for (SsoConnector field: ssoConnectors) {
+			choices.add(field.getName());
+		}
+		return choices;
 	}
 
 	@Editable(order=13, name="Automatically assign existing and newly created users to the selected group")
